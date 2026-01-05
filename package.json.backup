@@ -1,6 +1,4 @@
 {
-  "name": "transport-management-system",
-  "version": "0.1.0",
   "private": true,
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",
@@ -16,10 +14,15 @@
     "xlsx": "^0.18.5"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "HOST=0.0.0.0 react-scripts start",
+    "start:local": "react-scripts start",
     "build": "react-scripts build",
+    "vercel-build": "npm install && npm run build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "deploy:vercel": "npm run build && vercel --prod",
+    "deploy:netlify": "npm run build && netlify deploy --prod --dir=build",
+    "preview": "npm run build && serve -s build -l 3000"
   },
   "eslintConfig": {
     "extends": [
