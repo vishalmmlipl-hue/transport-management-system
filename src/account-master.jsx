@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, BookOpen, TrendingUp, TrendingDown, DollarSign, Users, Building2, Trash2, Edit2 } from 'lucide-react';
+import { Save, BookOpen, TrendingUp, DollarSign, Trash2, Edit2 } from 'lucide-react';
 
 export default function AccountMaster() {
   const [accounts, setAccounts] = useState([]);
