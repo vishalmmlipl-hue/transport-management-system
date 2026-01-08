@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: tms-database-server
+    env: node
+    buildCommand: npm install && npm run init-db
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        generateValue: true
+
