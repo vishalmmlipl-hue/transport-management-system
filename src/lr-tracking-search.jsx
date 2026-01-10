@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, FileText, Eye, Edit, Trash2, X, Printer } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
+import { lrBookingsService, manifestsService, invoicesService } from './services/dataService';
 
 const monoStyle = {
   fontFamily: "'Space Mono', monospace"
@@ -17,13 +18,17 @@ export default function LRTrackingSearch({ onLRSelect }) {
   const [printLRId, setPrintLRId] = useState(null);
 
   useEffect(() => {
-    const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const allInvoices = JSON.parse(localStorage.getItem('invoices') || '[]');
-    
-    setLrBookings(allLRs);
-    setManifests(allManifests);
-    setInvoices(allInvoices);
+    const fetchData = async () => {
+      const [allLRs, allManifests, allInvoices] = await Promise.all([
+        lrBookingsService.getAll(),
+        manifestsService.getAll(),
+        invoicesService.getAll()
+      ]);
+      setLrBookings(allLRs);
+      setManifests(allManifests);
+      setInvoices(allInvoices);
+    };
+    fetchData();
   }, []);
 
   useEffect(() => {
@@ -78,16 +83,15 @@ export default function LRTrackingSearch({ onLRSelect }) {
     }
   };
 
-  const handleDeleteLR = (lrId) => {
+  const handleDeleteLR = async (lrId) => {
     const status = getLRStatus(lrBookings.find(l => l.id === lrId));
     if (!status.canDelete) {
       alert('⚠️ Cannot delete this LR. It has been manifested or billed.');
       return;
     }
-
     if (window.confirm('Are you sure you want to delete this LR? This action cannot be undone.')) {
-      const updatedLRs = lrBookings.filter(lr => lr.id !== lrId);
-      localStorage.setItem('lrBookings', JSON.stringify(updatedLRs));
+      await lrBookingsService.delete(lrId);
+      const updatedLRs = await lrBookingsService.getAll();
       setLrBookings(updatedLRs);
       setSearchTerm('');
       setFilteredLRs([]);

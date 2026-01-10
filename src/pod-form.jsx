@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Camera, CheckCircle, Package, User, Calendar, MapPin, FileText, Upload, X, Image as ImageIcon, Scan, Sparkles } from 'lucide-react';
+import { podsService, lrBookingsService, tripsService } from './services/dataService';
 
 export default function PODForm() {
   const [lrBookings, setLrBookings] = useState([]);
@@ -9,9 +10,17 @@ export default function PODForm() {
   const [scanResult, setScanResult] = useState('');
   
   useEffect(() => {
-    setLrBookings(JSON.parse(localStorage.getItem('lrBookings') || '[]'));
-    setTrips(JSON.parse(localStorage.getItem('trips') || '[]'));
-    setPods(JSON.parse(localStorage.getItem('pods') || '[]'));
+    const fetchData = async () => {
+      const [lrData, tripData, podData] = await Promise.all([
+        lrBookingsService.getAll(),
+        tripsService.getAll(),
+        podsService.getAll()
+      ]);
+      setLrBookings(lrData);
+      setTrips(tripData);
+      setPods(podData);
+    };
+    fetchData();
   }, []);
 
   const [formData, setFormData] = useState({
@@ -223,23 +232,16 @@ export default function PODForm() {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    const existingPODs = JSON.parse(localStorage.getItem('pods') || '[]');
-    
     const newPOD = {
-      id: Date.now(),
       ...formData,
       createdAt: new Date().toISOString()
     };
-
-    existingPODs.push(newPOD);
-    localStorage.setItem('pods', JSON.stringify(existingPODs));
-    setPods(existingPODs);
-
+    await podsService.create(newPOD);
+    const updatedPods = await podsService.getAll();
+    setPods(updatedPods);
     alert(`✅ POD "${formData.podNumber}" created successfully!\n\nLR: ${lrBookings.find(l => l.id.toString() === formData.lrNumber)?.lrNumber}\nReceiver: ${formData.receiverName}\nPieces: ${formData.piecesDelivered}`);
-    
     window.location.reload();
   };
 

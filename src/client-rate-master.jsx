@@ -1,4 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
+import { tbbClientsService } from './services/dataService';
 import { Save, Plus, Trash2, Edit2, DollarSign, Package, MapPin, Weight, Truck, Download, Upload, FileSpreadsheet } from 'lucide-react';
 
 export default function ClientRateMaster() {
@@ -10,14 +12,17 @@ export default function ClientRateMaster() {
   const [rateType, setRateType] = useState('per-box');
 
   useEffect(() => {
-    // Load TBB clients and cities
-    const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-    const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    const storedRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-    
-    setClients(storedClients.filter(c => c.status === 'Active' && c.clientType === 'TBB'));
-    setCities(storedCities.filter(c => c.status === 'Active'));
-    setClientRates(storedRates);
+    // Load TBB clients from backend
+    async function fetchClients() {
+      try {
+        const allClients = await tbbClientsService.getAll();
+        setClients((allClients || []).filter(c => c.status === 'Active' && c.clientType === 'TBB'));
+      } catch (err) {
+        setClients([]);
+      }
+    }
+    fetchClients();
+    // TODO: Replace cities and clientRates with backend fetch as well
   }, []);
 
   const [formData, setFormData] = useState({

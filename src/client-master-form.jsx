@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { tbbClientsService, clientsService } from './services/dataService';
 import { Save, Plus, Trash2, User } from 'lucide-react';
 
 export default function ClientMasterForm() {
@@ -45,16 +46,11 @@ export default function ClientMasterForm() {
 
   const [showAdditionalContact, setShowAdditionalContact] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Get existing clients from localStorage
-    const existingClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-    
     // Create new client object
     const newClient = {
-      id: Date.now(), // Simple ID generation
-      code: formData.clientCode || `TBB${String(existingClients.length + 1).padStart(3, '0')}`,
+      code: formData.clientCode,
       companyName: formData.companyName,
       tradeName: formData.tradeName,
       address: formData.address,
@@ -70,29 +66,20 @@ export default function ClientMasterForm() {
       remarks: formData.remarks,
       createdAt: new Date().toISOString()
     };
-    
-    // Add to existing clients
-    existingClients.push(newClient);
-    
-    // Save to localStorage
-    localStorage.setItem('tbbClients', JSON.stringify(existingClients));
-    
-    // Also save to clients storage for sundry creditors
-    const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
-    const clientExists = allClients.find(c => c.id === newClient.id);
-    if (!clientExists) {
-      allClients.push(newClient);
-      localStorage.setItem('clients', JSON.stringify(allClients));
+    try {
+      // Save to backend (TBB clients table)
+      const tbbResp = await tbbClientsService.create(newClient);
+      console.log('TBB Client API response:', tbbResp);
+      // Also save to clients table for sundry creditors
+      const clientsResp = await clientsService.create(newClient);
+      console.log('Clients API response:', clientsResp);
+      window.dispatchEvent(new Event('clientDataUpdated'));
+      alert(`Client "${formData.companyName}" created successfully!\n\nClient Code: ${newClient.code}\n\nThis client is now available for selection in LR booking forms.`);
+      window.location.reload();
+    } catch (err) {
+      alert('Error creating client: ' + err.message);
+      console.error('Client creation error:', err);
     }
-    
-    // Dispatch custom event to notify other components
-    window.dispatchEvent(new Event('clientDataUpdated'));
-    
-    console.log('Client Master Data:', newClient);
-    alert(`Client "${formData.companyName}" created successfully!\n\nClient Code: ${newClient.code}\n\nThis client is now available for selection in LR booking forms.`);
-    
-    // Reset form
-    window.location.reload();
   };
 
   const addAdditionalContact = () => {
