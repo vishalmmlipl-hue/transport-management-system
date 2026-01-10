@@ -46,7 +46,7 @@ export default function LoginForm({ onLogin }) {
     return years;
   };
 
-  // Set default financial year on mount
+  // Set default financial year on mount and load users from server
   useEffect(() => {
     const currentYear = new Date().getFullYear();
     const defaultFY = `${currentYear}-${currentYear + 1}`;
@@ -56,6 +56,23 @@ export default function LoginForm({ onLogin }) {
     if (!localStorage.getItem('financialYear')) {
       localStorage.setItem('financialYear', defaultFY);
     }
+    
+    // Load users from server
+    const loadUsersFromServer = async () => {
+      try {
+        const syncService = (await import('./utils/sync-service')).default;
+        const result = await syncService.load('users');
+        if (result.synced && result.data) {
+          // Update localStorage with server data
+          localStorage.setItem('users', JSON.stringify(result.data));
+          console.log('✅ Users loaded from server:', result.data.length);
+        }
+      } catch (error) {
+        console.error('Error loading users from server:', error);
+      }
+    };
+    
+    loadUsersFromServer();
   }, []);
 
   const handleSubmit = (e) => {

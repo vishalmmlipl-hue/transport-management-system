@@ -25,9 +25,26 @@ export default function UserMasterForm() {
     loadUsers();
   }, []);
 
-  const loadUsers = () => {
-    const storedUsers = JSON.parse(localStorage.getItem('users') || '[]');
-    setUsers(storedUsers);
+  const loadUsers = async () => {
+    try {
+      // Try to load from server first
+      const syncService = (await import('./utils/sync-service')).default;
+      const result = await syncService.load('users');
+      if (result.synced && result.data) {
+        setUsers(result.data);
+        // Update localStorage with server data
+        localStorage.setItem('users', JSON.stringify(result.data));
+      } else {
+        // Fallback to localStorage
+        const storedUsers = JSON.parse(localStorage.getItem('users') || '[]');
+        setUsers(storedUsers);
+      }
+    } catch (error) {
+      console.error('Error loading users:', error);
+      // Fallback to localStorage
+      const storedUsers = JSON.parse(localStorage.getItem('users') || '[]');
+      setUsers(storedUsers);
+    }
   };
 
   const [formData, setFormData] = useState({
@@ -288,7 +305,7 @@ export default function UserMasterForm() {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
     const existingUsers = JSON.parse(localStorage.getItem('users') || '[]');
@@ -330,6 +347,21 @@ export default function UserMasterForm() {
           if (formData.password && formData.password.length > 0) {
             updatedUser.password = formData.password;
           }
+          
+          // Save to server
+          (async () => {
+            try {
+              const syncService = (await import('./utils/sync-service')).default;
+              const result = await syncService.save('users', updatedUser, true, editingUserId);
+              if (result.synced) {
+                console.log('✅ User updated on server');
+              } else {
+                console.warn('⚠️ User updated locally only (server unavailable)');
+              }
+            } catch (error) {
+              console.error('Error updating user on server:', error);
+            }
+          })();
           
           return updatedUser;
         }
@@ -380,6 +412,19 @@ export default function UserMasterForm() {
       
       existingUsers.push(newUser);
       localStorage.setItem('users', JSON.stringify(existingUsers));
+      
+      // Save to server
+      try {
+        const syncService = (await import('./utils/sync-service')).default;
+        const result = await syncService.save('users', newUser);
+        if (result.synced) {
+          console.log('✅ User saved to server');
+        } else {
+          console.warn('⚠️ User saved locally only (server unavailable)');
+        }
+      } catch (error) {
+        console.error('Error saving user to server:', error);
+      }
       
       const selectedBranch = branches.find(b => b.id.toString() === formData.branch);
       const branchInfo = selectedBranch ? `\nBranch: ${selectedBranch.branchName}` : '';
