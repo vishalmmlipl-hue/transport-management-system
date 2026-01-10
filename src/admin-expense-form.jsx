@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, DollarSign, Wallet, User, FileText } from 'lucide-react';
+import { Save, DollarSign, Wallet } from 'lucide-react';
 
 export default function AdminExpenseForm() {
   const [branches, setBranches] = useState([]);
