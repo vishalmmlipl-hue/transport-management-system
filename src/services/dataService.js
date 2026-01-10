@@ -188,6 +188,15 @@ export const invoicesService = {
   query: (filters) => dataService.query(tableNames.invoices, filters)
 };
 
+export const podsService = {
+  getAll: () => dataService.getAll(tableNames.pods),
+  getById: (id) => dataService.getById(tableNames.pods, id),
+  create: (pod) => dataService.create(tableNames.pods, pod),
+  update: (id, updates) => dataService.update(tableNames.pods, id, updates),
+  delete: (id) => dataService.delete(tableNames.pods, id),
+  query: (filters) => dataService.query(tableNames.pods, filters)
+};
+
 export const usersService = {
   getAll: () => dataService.getAll(tableNames.users),
   getById: (id) => dataService.getById(tableNames.users, id),
