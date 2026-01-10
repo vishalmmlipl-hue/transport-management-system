@@ -1,24 +1,50 @@
 // Database API Client
 // Replaces localStorage with API calls to backend server
 
-// Use production API URL if on mmlipl.info, otherwise use localhost
+// Get API Base URL - Priority: Environment variable > Production domain > Localhost
 const getAPIBaseURL = () => {
+  // 1. Check environment variable first (highest priority)
+  if (process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+  
+  // 2. Check if running on production domain
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
+    // Use Render API server for mmlipl.info (Netlify frontend)
     if (hostname === 'mmlipl.info' || hostname === 'www.mmlipl.info') {
-      // Use Render API server for production
+      // Use Render API server (backend is on Render)
+      return 'https://transport-management-system-wzhx.onrender.com/api';
+    }
+    // Fallback to Render for other production domains (Netlify, etc.)
+    if (hostname.includes('netlify.app') ||
+        hostname.includes('vercel.app') ||
+        (!hostname.includes('localhost') && hostname !== 'mmlipl.info')) {
+      // Use Render API server for other production domains
       return 'https://transport-management-system-wzhx.onrender.com/api';
     }
   }
-  return process.env.REACT_APP_API_URL || 'http://localhost:3001/api'; // Development
+  
+  // 3. Fallback to localhost for local development
+  return 'http://localhost:3001/api';
 };
 
 const API_BASE_URL = getAPIBaseURL();
 
+// Log API URL for debugging (always log in browser console)
+if (typeof window !== 'undefined') {
+  console.log('🔗 API Base URL:', API_BASE_URL);
+  console.log('🔗 Current hostname:', window.location.hostname);
+}
+
 // Helper function for API calls
 const apiCall = async (endpoint, options = {}) => {
+  const url = `${API_BASE_URL}${endpoint}`;
+  
+  console.log(`   🌐 API Call: ${options.method || 'GET'} ${url}`);
+  
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
@@ -26,14 +52,25 @@ const apiCall = async (endpoint, options = {}) => {
       ...options,
     });
 
+    console.log(`   📡 Response status: ${response.status} ${response.statusText}`);
+
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`   ❌ API Error (${endpoint}):`, response.status, errorText);
       throw new Error(`API Error: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
+    console.log(`   ✅ API Response:`, data);
     return data;
   } catch (error) {
-    console.error(`API Error (${endpoint}):`, error);
+    // More detailed error logging
+    console.error(`   ❌ API Call Failed (${endpoint}):`, {
+      url,
+      error: error.message,
+      type: error.name,
+    });
+    
     // Fallback to localStorage if API fails
     return { success: false, error: error.message, fallback: true };
   }
@@ -61,27 +98,41 @@ export const databaseAPI = {
   },
 
   async create(tableName, data) {
+    console.log(`   📤 Creating ${tableName}:`, data);
     const result = await apiCall(`/${tableName}`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
-    if (result.success) {
+    console.log(`   📥 Create response for ${tableName}:`, result);
+    
+    if (result.success && result.data) {
+      console.log(`   ✅ Successfully created ${tableName}`);
       return result.data;
     }
-    // Fallback to localStorage
-    return this.createLocalStorage(tableName, data);
+    // Fallback to localStorage - mark it so sync-service knows it failed
+    console.warn(`   ⚠️ Create failed for ${tableName}, using localStorage fallback`);
+    const fallbackResult = this.createLocalStorage(tableName, data);
+    // Add fallback flag so sync-service can detect it
+    return { ...fallbackResult, _fallback: true, _apiFailed: true };
   },
 
   async update(tableName, id, data) {
+    console.log(`   📤 Updating ${tableName} ID ${id}:`, data);
     const result = await apiCall(`/${tableName}/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
-    if (result.success) {
+    console.log(`   📥 Update response for ${tableName}:`, result);
+    
+    if (result.success && result.data) {
+      console.log(`   ✅ Successfully updated ${tableName}`);
       return result.data;
     }
-    // Fallback to localStorage
-    return this.updateLocalStorage(tableName, id, data);
+    // Fallback to localStorage - mark it so sync-service knows it failed
+    console.warn(`   ⚠️ Update failed for ${tableName}, using localStorage fallback`);
+    const fallbackResult = this.updateLocalStorage(tableName, id, data);
+    // Add fallback flag so sync-service can detect it
+    return fallbackResult ? { ...fallbackResult, _fallback: true, _apiFailed: true } : null;
   },
 
   async delete(tableName, id) {
@@ -161,10 +212,35 @@ export const databaseAPI = {
   // Check server health
   async checkHealth() {
     try {
-      const response = await fetch(`${API_BASE_URL.replace('/api', '')}/api/health`);
+      // Use the health endpoint directly
+      const healthUrl = API_BASE_URL.endsWith('/api') 
+        ? `${API_BASE_URL.replace('/api', '')}/api/health`
+        : `${API_BASE_URL}/health`;
+      
+      const response = await fetch(healthUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        console.warn(`⚠️ Health check failed: ${response.status}`);
+        return false;
+      }
+      
       const data = await response.json();
-      return data.success || false;
+      const isHealthy = data.success || false;
+      
+      if (isHealthy) {
+        console.log('✅ Server health check passed');
+      } else {
+        console.warn('⚠️ Server health check returned false');
+      }
+      
+      return isHealthy;
     } catch (error) {
+      console.error('❌ Server health check error:', error.message);
       return false;
     }
   },
