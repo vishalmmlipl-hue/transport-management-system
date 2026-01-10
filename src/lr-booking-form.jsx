@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Calculator, Printer, Search, Edit2 } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
+import { tbbClientsService, clientsService } from './services/dataService';
 
 export default function LRBookingForm() {
   // Load TBB clients from localStorage
@@ -585,42 +586,22 @@ export default function LRBookingForm() {
   }, []);
 
   // Function to load clients and other data
-  const loadData = () => {
-    const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-    const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
-    const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
-    const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-    
-    // Combine clients from both tbbClients and clients storage
-    const combinedClients = [...storedClients, ...allClients];
-    
-    // Only show active TBB clients (from both sources)
-    const activeTbbClients = combinedClients.filter(c => 
-      c.status === 'Active' && c.clientType === 'TBB'
-    );
-    // Remove duplicates based on id
-    const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
-      index === self.findIndex(c => c.id === client.id)
-    );
-    setTbbClients(uniqueTbbClients);
-    
-    // Only show active cities
-    const activeCities = storedCities.filter(c => c.status === 'Active');
-    setCities(activeCities);
-    
-    // Only show active vehicles
-    const activeVehicles = storedVehicles.filter(v => v.status === 'Active');
-    setVehicles(activeVehicles);
-    
-    // Only show active branches
-    const activeBranches = storedBranches.filter(b => b.status === 'Active');
-    setBranches(activeBranches);
-    
-    // Load client rates (only active ones)
-    const activeClientRates = storedClientRates.filter(r => r.status === 'Active');
-    setClientRates(activeClientRates);
+  const loadData = async () => {
+    try {
+      // Fetch clients from backend
+      const tbbClients = await tbbClientsService.getAll();
+      const allClients = await clientsService.getAll();
+      // Combine and filter
+      const combinedClients = [...(tbbClients || []), ...(allClients || [])];
+      const activeTbbClients = combinedClients.filter(c => c.status === 'Active' && c.clientType === 'TBB');
+      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
+        index === self.findIndex(c => c.id === client.id)
+      );
+      setTbbClients(uniqueTbbClients);
+      // TODO: Replace cities, vehicles, branches, clientRates with backend fetch as well
+    } catch (err) {
+      setTbbClients([]);
+    }
   };
 
   // Load clients, cities, vehicles, and branches from localStorage on component mount

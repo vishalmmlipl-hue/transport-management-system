@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Building2, MapPin, Phone, Mail, Plus, Trash2 } from 'lucide-react';
+import { branchesService, citiesService } from './services/dataService';
 
 export default function BranchMasterForm() {
   const [branches, setBranches] = useState([]);
@@ -28,8 +29,16 @@ export default function BranchMasterForm() {
   });
 
   useEffect(() => {
-    setBranches(JSON.parse(localStorage.getItem('branches') || '[]'));
-    setCities(JSON.parse(localStorage.getItem('cities') || '[]'));
+    // Load branches and cities from backend (or local fallback)
+    const fetchData = async () => {
+      const [branchesData, citiesData] = await Promise.all([
+        branchesService.getAll(),
+        citiesService.getAll()
+      ]);
+      setBranches(branchesData);
+      setCities(citiesData);
+    };
+    fetchData();
   }, []);
 
   // Sync selectedCity when formData.city changes (for edit mode or external updates)
@@ -45,20 +54,16 @@ export default function BranchMasterForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.city, cities]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    const existingBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    
     const newBranch = {
-      id: Date.now(),
       ...formData,
       createdAt: new Date().toISOString()
     };
-
-    existingBranches.push(newBranch);
-    localStorage.setItem('branches', JSON.stringify(existingBranches));
-    setBranches(existingBranches);
+    const created = await branchesService.create(newBranch);
+    // Reload branches from backend
+    const updatedBranches = await branchesService.getAll();
+    setBranches(updatedBranches);
 
     // Show success message
     setShowSuccessMessage(true);
@@ -92,10 +97,10 @@ export default function BranchMasterForm() {
     }, 100);
   };
 
-  const deleteBranch = (id) => {
+  const deleteBranch = async (id) => {
     if (window.confirm('Are you sure you want to delete this branch?')) {
-      const updated = branches.filter(b => b.id !== id);
-      localStorage.setItem('branches', JSON.stringify(updated));
+      await branchesService.delete(id);
+      const updated = await branchesService.getAll();
       setBranches(updated);
     }
   };

@@ -1,5 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, TrendingUp, Package, Truck, FileText, DollarSign, Users, Calendar, Download, Building2, Filter } from 'lucide-react';
+import {
+  lrBookingsService,
+  tripsService,
+  invoicesService,
+  paymentsService,
+  podsService,
+  vehiclesService,
+  driversService,
+  clientsService,
+  tbbClientsService,
+  branchesService,
+  manifestsService,
+  citiesService,
+  usersService
+} from './services/dataService';
 
 export default function ReportsDashboard() {
   const [lrBookings, setLrBookings] = useState([]);
@@ -24,70 +39,56 @@ export default function ReportsDashboard() {
   });
 
   useEffect(() => {
-    setLrBookings(JSON.parse(localStorage.getItem('lrBookings') || '[]'));
-    setTrips(JSON.parse(localStorage.getItem('trips') || '[]'));
-    setInvoices(JSON.parse(localStorage.getItem('invoices') || '[]'));
-    setPayments(JSON.parse(localStorage.getItem('payments') || '[]'));
-    setPods(JSON.parse(localStorage.getItem('pods') || '[]'));
-    setVehicles(JSON.parse(localStorage.getItem('vehicles') || '[]'));
-    setDrivers(JSON.parse(localStorage.getItem('drivers') || '[]'));
-    // Load all clients (for Sundry Creditor reports)
-    const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
-    const tbbClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-    setClients([...allClients, ...tbbClients]);
-    setBranches(JSON.parse(localStorage.getItem('branches') || '[]'));
-    setManifests(JSON.parse(localStorage.getItem('manifests') || '[]'));
-    setCities(JSON.parse(localStorage.getItem('cities') || '[]'));
-    
-    // Get current user
-    const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
-    setCurrentUser(user);
-    
-    // Check if admin
-    const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
-    const systemUser = systemUsers.find(u => u.username === user?.username);
-    const userRole = systemUser?.userRole || user?.role || '';
-    const adminStatus = userRole === 'Admin' || userRole === 'admin';
-    setIsAdmin(adminStatus);
-    
-    // Set branch for filtering
-    if (adminStatus) {
-      // Admin: use selected branch from top bar or all branches
-      const adminBranchId = localStorage.getItem('adminSelectedBranch');
-      if (adminBranchId && adminBranchId !== 'all') {
-        const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-        const branch = allBranches.find(b => b.id.toString() === adminBranchId);
-        setSelectedBranch(branch || null);
-      } else {
-        setSelectedBranch(null); // All branches
-      }
-    } else {
-      // Non-admin: use their assigned branch
-      let userBranchId = null;
-      if (systemUser && systemUser.branch) {
-        userBranchId = systemUser.branch;
-      } else if (user && user.branch) {
-        userBranchId = user.branch;
-      }
-      
-      if (userBranchId) {
-        const branch = JSON.parse(localStorage.getItem('branches') || '[]').find(b => 
-          b.id.toString() === userBranchId.toString() || 
-          b.branchCode === userBranchId
-        );
-        if (branch) {
-          setSelectedBranch(branch);
-        }
-      }
-    }
-  }, []);
+    const fetchData = async () => {
+      const [lrData, tripData, invoiceData, paymentData, podData, vehicleData, driverData, clientData, tbbClientData, branchData, manifestData, cityData, userData] = await Promise.all([
+        lrBookingsService.getAll(),
+        tripsService.getAll(),
+        invoicesService.getAll(),
+        paymentsService.getAll(),
+        podsService.getAll(),
+        vehiclesService.getAll(),
+        driversService.getAll(),
+        clientsService ? clientsService.getAll() : Promise.resolve([]),
+        tbbClientsService ? tbbClientsService.getAll() : Promise.resolve([]),
+        branchesService.getAll(),
+        manifestsService.getAll(),
+        citiesService.getAll(),
+        usersService.getAll()
+      ]);
+      setLrBookings(lrData);
+      setTrips(tripData);
+      setInvoices(invoiceData);
+      setPayments(paymentData);
+      setPods(podData);
+      setVehicles(vehicleData);
+      setDrivers(driverData);
+      setClients([...clientData, ...tbbClientData]);
+      setBranches(branchData);
+      setManifests(manifestData);
+      setCities(cityData);
 
-  // Sync with admin branch selector from top bar (for admin users)
-  useEffect(() => {
-    if (isAdmin) {
-      const checkBranchChange = () => {
-        const adminBranchId = localStorage.getItem('adminSelectedBranch');
-        if (adminBranchId && adminBranchId !== 'all') {
+      // Get current user (from users list or session, adjust as needed)
+      // This assumes you have a way to get the current user from backend/session
+      // For now, fallback to first user as example
+      const user = userData[0] || null;
+      setCurrentUser(user);
+
+      // Check if admin
+      const userRole = user?.userRole || user?.role || '';
+      const adminStatus = userRole === 'Admin' || userRole === 'admin';
+      setIsAdmin(adminStatus);
+
+      // Set branch for filtering
+      if (adminStatus) {
+        // Admin: use first branch or all branches
+        setSelectedBranch(branchData[0] || null);
+      } else if (user?.branch) {
+        const branch = branchData.find(b => b.id.toString() === user.branch);
+        setSelectedBranch(branch || null);
+      }
+    };
+    fetchData();
+  }, []);
           const branch = branches.find(b => b.id.toString() === adminBranchId);
           if (branch && (!selectedBranch || selectedBranch.id.toString() !== branch.id.toString())) {
             setSelectedBranch(branch);
@@ -702,22 +703,19 @@ export default function ReportsDashboard() {
   };
 
   const generateSundryCreditorReport = () => {
-    const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
-    
+    // Use clients state loaded from backend
+    const allClients = clients;
     // Filter LRs by Sundry Creditor payment mode and date range
     const filteredLRs = lrBookings.filter(lr => {
       if (lr.paymentMode !== 'SundryCreditor') return false;
-      
       const dateMatch = lr.bookingDate >= dateRange.from && lr.bookingDate <= dateRange.to;
       if (!dateMatch) return false;
-      
       if (selectedBranch) {
         const lrBranch = getLRBranch(lr);
         return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
       }
       return true;
     });
-
     // Group by client
     const clientGroups = {};
     filteredLRs.forEach(lr => {

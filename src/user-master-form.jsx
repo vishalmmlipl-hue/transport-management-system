@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, User, Eye, EyeOff } from 'lucide-react';
+import { usersService, branchesService, staffService } from './services/dataService';
 
 export default function UserMasterForm() {
   const [branches, setBranches] = useState([]);
@@ -8,14 +9,16 @@ export default function UserMasterForm() {
   
   // Load branches and staff from localStorage
   useEffect(() => {
-    const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const storedStaff = JSON.parse(localStorage.getItem('staff') || '[]');
-    
-    const activeBranches = storedBranches.filter(b => b.status === 'Active');
-    setBranches(activeBranches);
-    
-    const activeStaff = storedStaff.filter(s => s.status === 'Active');
-    setStaff(activeStaff);
+    // Load branches and staff from backend (or local fallback)
+    const fetchData = async () => {
+      const [branchesData, staffData] = await Promise.all([
+        branchesService.getAll(),
+        staffService ? staffService.getAll() : Promise.resolve([])
+      ]);
+      setBranches(branchesData.filter(b => b.status === 'Active'));
+      setStaff(staffData.filter(s => s.status === 'Active'));
+    };
+    fetchData();
   }, []);
 
   const [formData, setFormData] = useState({
@@ -186,31 +189,25 @@ export default function UserMasterForm() {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
     // Validate password match
     if (formData.password !== formData.confirmPassword) {
       alert('❌ Passwords do not match! Please check and try again.');
       return;
     }
-    
     // Validate password strength
     if (formData.password.length < 6) {
       alert('❌ Password must be at least 6 characters long!');
       return;
     }
-    
-    const existingUsers = JSON.parse(localStorage.getItem('users') || '[]');
-    
+    const existingUsers = await usersService.getAll();
     // Check for duplicate username
     if (existingUsers.some(u => u.username.toLowerCase() === formData.username.toLowerCase())) {
       alert('❌ Username already exists! Please choose a different username.');
       return;
     }
-    
     const newUser = {
-      id: Date.now(),
       code: formData.userCode || `USR${String(existingUsers.length + 1).padStart(3, '0')}`,
       username: formData.username,
       password: formData.password, // In production, this should be hashed
@@ -225,15 +222,10 @@ export default function UserMasterForm() {
       remarks: formData.remarks,
       createdAt: new Date().toISOString()
     };
-    
-    existingUsers.push(newUser);
-    localStorage.setItem('users', JSON.stringify(existingUsers));
-    
+    await usersService.create(newUser);
     const selectedBranch = branches.find(b => b.id.toString() === formData.branch);
     const branchInfo = selectedBranch ? `\nBranch: ${selectedBranch.branchName}` : '';
-    
     const permissionCount = Object.values(formData.accessPermissions).filter(p => p).length;
-    
     alert(`User "${formData.username}" created successfully!\n\nUser Code: ${newUser.code}\nRole: ${formData.userRole}${branchInfo}\nPermissions: ${permissionCount}/${permissionGroups.length} modules\n\n⚠️ Note: Please save the login credentials securely!`);
     window.location.reload();
   };

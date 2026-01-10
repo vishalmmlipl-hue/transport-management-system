@@ -1,260 +1,83 @@
+export const expenseMasterService = {
+  getAll: () => dataService.getAll('expenseMaster'),
+  getById: (id) => dataService.getById('expenseMaster', id),
+  create: (record) => dataService.create('expenseMaster', record),
+  update: (id, updates) => dataService.update('expenseMaster', id, updates),
+  delete: (id) => dataService.delete('expenseMaster', id),
+  query: (filters) => dataService.query('expenseMaster', filters)
+};
+
+export const accountsService = {
+  getAll: () => dataService.getAll('accounts'),
+  getById: (id) => dataService.getById('accounts', id),
+  create: (record) => dataService.create('accounts', record),
+  update: (id, updates) => dataService.update('accounts', id, updates),
+  delete: (id) => dataService.delete('accounts', id),
+  query: (filters) => dataService.query('accounts', filters)
+};
 // Data Service Layer
-// This service abstracts data storage - works with Supabase (cloud) or localStorage (fallback)
-// All components should use this service instead of directly calling localStorage or Supabase
+// This service abstracts data storage - works only with backend API (cloud sync)
 
-import { supabase, isSupabaseConfigured } from '../supabaseClient';
+// Render.com API base URL
+const API_BASE_URL = 'https://transport-management-system-wzhx.onrender.com';
 
-// Helper to determine storage mode
-const useDatabase = isSupabaseConfigured();
+// Helper for HTTP requests
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+    ...options,
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || 'API request failed');
+  }
+  return response.json();
+}
 
-// Generic CRUD operations
+// Generic CRUD operations using Render.com API
 export const dataService = {
   // Get all records from a table
   async getAll(tableName) {
-    if (useDatabase) {
-      try {
-        if (!supabase) {
-          console.warn(`Supabase not initialized. Using localStorage for ${tableName}`);
-          return this.getAllLocalStorage(tableName);
-        }
-        
-        const { data, error } = await supabase
-          .from(tableName)
-          .select('*')
-          .order('created_at', { ascending: false });
-        
-        if (error) {
-          console.error(`Error fetching ${tableName}:`, error);
-          console.error('Error details:', JSON.stringify(error, null, 2));
-          // Fallback to localStorage if database fails
-          return this.getAllLocalStorage(tableName);
-        }
-        return data || [];
-      } catch (error) {
-        console.error(`Error fetching ${tableName}:`, error);
-        console.error('Exception details:', error.message);
-        return this.getAllLocalStorage(tableName);
-      }
-    } else {
-      return this.getAllLocalStorage(tableName);
-    }
+    return apiRequest(`/api/${tableName}`);
   },
 
   // Get a single record by ID
   async getById(tableName, id) {
-    if (useDatabase) {
-      try {
-        const { data, error } = await supabase
-          .from(tableName)
-          .select('*')
-          .eq('id', id)
-          .single();
-        
-        if (error) {
-          console.error(`Error fetching ${tableName} by ID:`, error);
-          return this.getByIdLocalStorage(tableName, id);
-        }
-        return data;
-      } catch (error) {
-        console.error(`Error fetching ${tableName} by ID:`, error);
-        return this.getByIdLocalStorage(tableName, id);
-      }
-    } else {
-      return this.getByIdLocalStorage(tableName, id);
-    }
+    return apiRequest(`/api/${tableName}/${id}`);
   },
 
   // Create a new record
   async create(tableName, record) {
-    if (useDatabase) {
-      try {
-        const { data, error } = await supabase
-          .from(tableName)
-          .insert([record])
-          .select()
-          .single();
-        
-        if (error) {
-          console.error(`Error creating ${tableName}:`, error);
-          // Fallback to localStorage
-          return this.createLocalStorage(tableName, record);
-        }
-        return data;
-      } catch (error) {
-        console.error(`Error creating ${tableName}:`, error);
-        return this.createLocalStorage(tableName, record);
-      }
-    } else {
-      return this.createLocalStorage(tableName, record);
-    }
-  },
-
-  // Update a record
-  async update(tableName, id, updates) {
-    if (useDatabase) {
-      try {
-        const { data, error } = await supabase
-          .from(tableName)
-          .update(updates)
-          .eq('id', id)
-          .select()
-          .single();
-        
-        if (error) {
-          console.error(`Error updating ${tableName}:`, error);
-          return this.updateLocalStorage(tableName, id, updates);
-        }
-        return data;
-      } catch (error) {
-        console.error(`Error updating ${tableName}:`, error);
-        return this.updateLocalStorage(tableName, id, updates);
-      }
-    } else {
-      return this.updateLocalStorage(tableName, id, updates);
-    }
-  },
-
-  // Delete a record
-  async delete(tableName, id) {
-    if (useDatabase) {
-      try {
-        const { error } = await supabase
-          .from(tableName)
-          .delete()
-          .eq('id', id);
-        
-        if (error) {
-          console.error(`Error deleting ${tableName}:`, error);
-          return this.deleteLocalStorage(tableName, id);
-        }
-        return { success: true };
-      } catch (error) {
-        console.error(`Error deleting ${tableName}:`, error);
-        return this.deleteLocalStorage(tableName, id);
-      }
-    } else {
-      return this.deleteLocalStorage(tableName, id);
-    }
-  },
-
-  // Query with filters
-  async query(tableName, filters = {}) {
-    if (useDatabase) {
-      try {
-        let query = supabase.from(tableName).select('*');
-        
-        // Apply filters
-        Object.keys(filters).forEach(key => {
-          if (filters[key] !== undefined && filters[key] !== null) {
-            query = query.eq(key, filters[key]);
-          }
-        });
-        
-        const { data, error } = await query;
-        
-        if (error) {
-          console.error(`Error querying ${tableName}:`, error);
-          return this.queryLocalStorage(tableName, filters);
-        }
-        return data || [];
-      } catch (error) {
-        console.error(`Error querying ${tableName}:`, error);
-        return this.queryLocalStorage(tableName, filters);
-      }
-    } else {
-      return this.queryLocalStorage(tableName, filters);
-    }
-  },
-
-  // LocalStorage fallback methods
-  getAllLocalStorage(tableName) {
-    try {
-      const data = localStorage.getItem(tableName);
-      return data ? JSON.parse(data) : [];
-    } catch (error) {
-      console.error(`Error reading localStorage for ${tableName}:`, error);
-      return [];
-    }
-  },
-
-  getByIdLocalStorage(tableName, id) {
-    const all = this.getAllLocalStorage(tableName);
-    return all.find(item => item.id?.toString() === id?.toString()) || null;
-  },
-
-  createLocalStorage(tableName, record) {
-    const all = this.getAllLocalStorage(tableName);
-    const newRecord = {
-      ...record,
-      id: record.id || Date.now(),
-      created_at: record.created_at || new Date().toISOString()
-    };
-    all.push(newRecord);
-    localStorage.setItem(tableName, JSON.stringify(all));
-    return newRecord;
-  },
-
-  updateLocalStorage(tableName, id, updates) {
-    const all = this.getAllLocalStorage(tableName);
-    const index = all.findIndex(item => item.id?.toString() === id?.toString());
-    if (index !== -1) {
-      all[index] = {
-        ...all[index],
-        ...updates,
-        updated_at: new Date().toISOString()
-      };
-      localStorage.setItem(tableName, JSON.stringify(all));
-      return all[index];
-    }
-    return null;
-  },
-
-  deleteLocalStorage(tableName, id) {
-    const all = this.getAllLocalStorage(tableName);
-    const filtered = all.filter(item => item.id?.toString() !== id?.toString());
-    localStorage.setItem(tableName, JSON.stringify(filtered));
-    return { success: true };
-  },
-
-  queryLocalStorage(tableName, filters) {
-    const all = this.getAllLocalStorage(tableName);
-    return all.filter(item => {
-      return Object.keys(filters).every(key => {
-        if (filters[key] === undefined || filters[key] === null) return true;
-        return item[key]?.toString() === filters[key]?.toString();
-      });
+    return apiRequest(`/api/${tableName}`, {
+      method: 'POST',
+      body: JSON.stringify(record),
     });
   },
 
-  // Get storage mode
-  getStorageMode() {
-    return useDatabase ? 'database' : 'localStorage';
+  // Update a record by ID
+  async update(tableName, id, updates) {
+    return apiRequest(`/api/${tableName}/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
   },
 
-  // Check if database is configured
-  isDatabaseConfigured() {
-    return useDatabase;
-  }
-};
+  // Delete a record by ID
+  async delete(tableName, id) {
+    return apiRequest(`/api/${tableName}/${id}`, {
+      method: 'DELETE',
+    });
+  },
 
-// Table name mappings (localStorage keys to database table names)
-export const tableNames = {
-  // Master data
-  branches: 'branches',
-  cities: 'cities',
-  tbbClients: 'tbb_clients',
-  vehicles: 'vehicles',
-  drivers: 'drivers',
-  staff: 'staff',
-  users: 'users',
-  vendors: 'vendors',
-  marketVehicleVendors: 'vendors', // Same table, filtered by type
-  otherVendors: 'vendors', // Same table, filtered by type
-  clientRates: 'client_rates',
-  accounts: 'accounts',
-  lrSeries: 'lr_series',
-  
-  // Transaction data
+  // Query records with filters (if supported by your API)
+  async query(tableName, filters) {
+    const params = filters ? '?' + new URLSearchParams(filters).toString() : '';
+    return apiRequest(`/api/${tableName}${params}`);
+  },
+};
   lrBookings: 'lr_bookings',
   manifests: 'manifests',
   trips: 'trips',
@@ -263,7 +86,43 @@ export const tableNames = {
   payments: 'payments'
 };
 
+// Table name mapping for backend API
+const tableNames = {
+  branches: 'branches',
+  cities: 'cities',
+  vehicles: 'vehicles',
+  drivers: 'drivers',
+  lrBookings: 'lr_bookings',
+  manifests: 'manifests',
+  trips: 'trips',
+  pods: 'pods',
+  invoices: 'invoices',
+  payments: 'payments',
+  users: 'users',
+  tbbClients: 'tbb_clients', // <-- Ensure this matches your backend table name
+  clients: 'clients'         // <-- Ensure this matches your backend table name
+};
+
 // Convenience functions for each table
+// TBB Clients Service
+export const tbbClientsService = {
+  getAll: () => dataService.getAll(tableNames.tbbClients),
+  getById: (id) => dataService.getById(tableNames.tbbClients, id),
+  create: (client) => dataService.create(tableNames.tbbClients, client),
+  update: (id, updates) => dataService.update(tableNames.tbbClients, id, updates),
+  delete: (id) => dataService.delete(tableNames.tbbClients, id),
+  query: (filters) => dataService.query(tableNames.tbbClients, filters)
+};
+
+// Generic Clients Service (for sundry creditors, etc)
+export const clientsService = {
+  getAll: () => dataService.getAll(tableNames.clients),
+  getById: (id) => dataService.getById(tableNames.clients, id),
+  create: (client) => dataService.create(tableNames.clients, client),
+  update: (id, updates) => dataService.update(tableNames.clients, id, updates),
+  delete: (id) => dataService.delete(tableNames.clients, id),
+  query: (filters) => dataService.query(tableNames.clients, filters)
+};
 export const branchesService = {
   getAll: () => dataService.getAll(tableNames.branches),
   getById: (id) => dataService.getById(tableNames.branches, id),

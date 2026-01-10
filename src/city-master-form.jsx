@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Save, MapPin, Search, RefreshCw, Database, AlertCircle, X } from 'lucide-react';
 import initSampleData from './init-sample-data';
+import { citiesService } from './services/dataService';
 
 export default function CityMasterForm() {
   const [cities, setCities] = useState([]);
@@ -55,8 +56,8 @@ export default function CityMasterForm() {
     };
   }, []);
 
-  const loadCities = () => {
-    const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
+  const loadCities = async () => {
+    const allCities = await citiesService.getAll();
     setCities(allCities);
     setFilteredCities(allCities);
   };
@@ -81,11 +82,12 @@ export default function CityMasterForm() {
     setFilteredCities(filtered);
   };
 
-  const handleReloadSampleData = () => {
+  const handleReloadSampleData = async () => {
     if (window.confirm('⚠️ This will reload all sample data including cities. Existing data will be replaced. Are you sure?')) {
+      // Optionally, you could clear the backend table here if needed
       localStorage.clear();
       initSampleData();
-      loadCities();
+      await loadCities();
       alert('✅ Sample data reloaded successfully! All cities including Madhya Pradesh districts, Mumbai region, and Delhi NCR are now available.');
     }
   };
@@ -164,30 +166,26 @@ export default function CityMasterForm() {
     'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry'
   ];
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    const existingCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    
+    const allCities = await citiesService.getAll();
     // Check for duplicate (same city name + same state)
-    const isDuplicate = existingCities.some(city => 
+    const isDuplicate = allCities.some(city =>
       city.cityName.toLowerCase() === formData.cityName.toLowerCase() &&
       city.state === formData.state &&
-      city.id !== formData.editingCityId // Exclude current city if editing
+      city.id !== formData.editingCityId
     );
-
     if (isDuplicate) {
-      const duplicateCity = existingCities.find(city => 
+      const duplicateCity = allCities.find(city =>
         city.cityName.toLowerCase() === formData.cityName.toLowerCase() &&
         city.state === formData.state
       );
       alert(`❌ Duplicate Entry!\n\nCity "${formData.cityName}" already exists in ${formData.state}.\n\nCity Code: ${duplicateCity.code}\n\nPlease use a different city name or state.`);
       return;
     }
-
     // Check if city code already exists
     if (formData.cityCode) {
-      const codeExists = existingCities.some(city => 
+      const codeExists = allCities.some(city =>
         city.code.toLowerCase() === formData.cityCode.toLowerCase() &&
         city.id !== formData.editingCityId
       );
@@ -196,10 +194,8 @@ export default function CityMasterForm() {
         return;
       }
     }
-    
     const newCity = {
-      id: formData.editingCityId || Date.now(),
-      code: formData.cityCode || `CITY${String(existingCities.length + 1).padStart(3, '0')}`,
+      code: formData.cityCode || `CITY${String(allCities.length + 1).padStart(3, '0')}`,
       cityName: formData.cityName.trim(),
       state: formData.state,
       region: formData.region.trim(),
@@ -210,28 +206,21 @@ export default function CityMasterForm() {
       transitDays: formData.transitDays,
       status: formData.status,
       remarks: formData.remarks.trim(),
-      createdAt: formData.editingCityId 
-        ? existingCities.find(c => c.id === formData.editingCityId)?.createdAt 
+      createdAt: formData.editingCityId
+        ? allCities.find(c => c.id === formData.editingCityId)?.createdAt
         : new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-
     if (formData.editingCityId) {
       // Update existing city
-      const index = existingCities.findIndex(c => c.id === formData.editingCityId);
-      if (index !== -1) {
-        existingCities[index] = newCity;
-        alert(`✅ City "${formData.cityName}" updated successfully!`);
-      }
+      await citiesService.update(formData.editingCityId, newCity);
+      alert(`✅ City "${formData.cityName}" updated successfully!`);
     } else {
       // Add new city
-      existingCities.push(newCity);
+      await citiesService.create(newCity);
       alert(`✅ City "${formData.cityName}" created successfully!\n\nCity Code: ${newCity.code}\n\nThis city is now available for selection in LR booking forms.`);
     }
-    
-    localStorage.setItem('cities', JSON.stringify(existingCities));
-    loadCities(); // Reload cities list
-    
+    await loadCities();
     // Reset form
     setFormData({
       cityCode: '',

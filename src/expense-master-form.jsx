@@ -127,52 +127,38 @@ export default function ExpenseMasterForm() {
     setAccounts(expenseAccounts);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
     if (!formData.category || !formData.expenseType || !formData.expenseHead) {
       alert('⚠️ Please fill all required fields (Category, Expense Type, and Expense Head)!');
       return;
     }
-
-    // Check if expense type already exists in the same category
-    const existingMaster = JSON.parse(localStorage.getItem('expenseMaster') || '[]');
+    const existingMaster = await expenseMasterService.getAll();
     const duplicate = existingMaster.find(
-      item => 
-        item.category === formData.category && 
+      item =>
+        item.category === formData.category &&
         item.expenseType.toLowerCase() === formData.expenseType.toLowerCase() &&
         item.id !== editingId
     );
-
     if (duplicate) {
       alert('⚠️ This expense type already exists in the selected category!');
       return;
     }
-
     if (editingId) {
       // Update existing
-      const updated = expenseMaster.map(item =>
-        item.id === editingId ? { ...formData, id: editingId } : item
-      );
-      localStorage.setItem('expenseMaster', JSON.stringify(updated));
-      setExpenseMaster(updated);
+      await expenseMasterService.update(editingId, { ...formData });
       setEditingId(null);
       alert('✅ Expense type updated successfully!');
     } else {
       // Create new
       const newItem = {
-        id: Date.now(),
         ...formData,
         createdAt: new Date().toISOString()
       };
-      
-      const updated = [...expenseMaster, newItem];
-      localStorage.setItem('expenseMaster', JSON.stringify(updated));
-      setExpenseMaster(updated);
+      await expenseMasterService.create(newItem);
       alert('✅ Expense type added successfully!');
     }
-
-    // Reset form
+    await loadData();
     setFormData({
       category: '',
       expenseType: '',
@@ -192,11 +178,10 @@ export default function ExpenseMasterForm() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const deleteItem = (id) => {
+  const deleteItem = async (id) => {
     if (window.confirm('Are you sure you want to delete this expense type?')) {
-      const updated = expenseMaster.filter(item => item.id !== id);
-      localStorage.setItem('expenseMaster', JSON.stringify(updated));
-      setExpenseMaster(updated);
+      await expenseMasterService.delete(id);
+      await loadData();
       alert('✅ Expense type deleted successfully!');
     }
   };
