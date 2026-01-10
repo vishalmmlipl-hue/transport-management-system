@@ -78,13 +78,6 @@ export const dataService = {
     return apiRequest(`/api/${tableName}${params}`);
   },
 };
-  lrBookings: 'lr_bookings',
-  manifests: 'manifests',
-  trips: 'trips',
-  pods: 'pods',
-  invoices: 'invoices',
-  payments: 'payments'
-};
 
 // Table name mapping for backend API
 const tableNames = {
