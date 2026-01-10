@@ -57,16 +57,21 @@ export const syncService = {
       // Check if API save was successful
       // apiResult should be the data object if successful (from databaseAPI.create/update)
       // If it has _fallback or _apiFailed flag, it means API failed and localStorage was used
-      // Also check if apiResult is an object with an id (successful create returns data with id)
       const hasFallbackFlag = apiResult && (apiResult._fallback === true || apiResult._apiFailed === true);
       const hasSuccessFalse = apiResult && apiResult.success === false;
-      const looksLikeData = apiResult && typeof apiResult === 'object' && (apiResult.id || apiResult.branchCode || apiResult.branchName);
+      
+      // Check if apiResult looks like valid data (has id or any data fields)
+      // More generic check - works for all table types
+      const looksLikeData = apiResult && typeof apiResult === 'object' && 
+                           !Array.isArray(apiResult) && 
+                           (apiResult.id || Object.keys(apiResult).length > 0);
       
       if (!hasFallbackFlag && !hasSuccessFalse && looksLikeData && apiResult) {
-        // API save appears successful - verify by checking if it has an id or key identifier
-        // For branches, check if it has branchCode or id
-        const hasIdentifier = apiResult.id || apiResult.branchCode || apiResult.branchName || 
-                             (isUpdate && id && apiResult.id === id);
+        // API save successful - verify by checking if it has an id or any data
+        // For updates, check if id matches. For creates, check if id exists or has data
+        const hasIdentifier = apiResult.id || 
+                             (isUpdate && id && apiResult.id === id) ||
+                             Object.keys(apiResult).length > 0; // Has any data fields
         
         if (hasIdentifier) {
           // API save successful - clean result without fallback flags
