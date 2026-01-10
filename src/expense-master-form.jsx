@@ -40,6 +40,7 @@ export default function ExpenseMasterForm() {
       { category: 'Operating', expenseType: 'Rent', subGroup: 'Rent' },
       { category: 'Operating', expenseType: 'Loading/Unloading', subGroup: 'Office Expenses' },
       { category: 'Operating', expenseType: 'Toll Charges', subGroup: 'Office Expenses' },
+      { category: 'Operating', expenseType: 'Driver Salary', subGroup: 'Salary & Wages' },
       
       // Administrative Expenses
       { category: 'Administrative', expenseType: 'Salary & Wages', subGroup: 'Salary & Wages' },
@@ -95,12 +96,18 @@ export default function ExpenseMasterForm() {
         allAccounts.push(expenseAccount);
       }
       
+      // Special description for Driver Salary
+      let description = `Default expense type for ${expense.expenseType}`;
+      if (expense.expenseType === 'Driver Salary') {
+        description = 'Driver Salary and Bhatta (Allowance) - All driver salary and bhatta payments should be debited through this expense head';
+      }
+      
       newExpenseTypes.push({
         id: Date.now() + index,
         category: expense.category,
         expenseType: expense.expenseType,
         expenseHead: expenseAccount.id,
-        description: `Default expense type for ${expense.expenseType}`,
+        description: description,
         status: 'Active',
         createdAt: new Date().toISOString()
       });

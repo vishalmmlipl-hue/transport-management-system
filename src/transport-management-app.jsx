@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { FileText, Users, MapPin, Truck, Package, UserCheck, Briefcase, Building2, UserCog, ClipboardList, CheckCircle, Receipt, DollarSign, BarChart, LogOut, User, Menu, X, Home, Settings, ChevronRight, TrendingUp, BookOpen, Hash, PackageCheck, Database, Edit2, Wallet } from 'lucide-react';
 import initSampleData from './init-sample-data';
+import AutoDataSync from './components/AutoDataSync';
+import syncService from './utils/sync-service';
 
 import LoginForm from './login-form.jsx';
 import ClientMasterForm from './client-master-form.jsx';
@@ -45,47 +47,79 @@ export default function TransportManagementApp() {
   const [branches, setBranches] = useState([]);
   const [selectedBranch, setSelectedBranch] = useState(null);
 
+  // Load branches from server
+  const loadBranchesFromServer = async () => {
+    try {
+      const result = await syncService.load('branches');
+      const activeBranches = (result.data || []).filter(b => b.status === 'Active' || !b.status);
+      setBranches(activeBranches);
+      return activeBranches;
+    } catch (error) {
+      console.error('Error loading branches:', error);
+      // Fallback to localStorage
+      const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+      const activeBranches = allBranches.filter(b => b.status === 'Active');
+      setBranches(activeBranches);
+      return activeBranches;
+    }
+  };
+
   useEffect(() => {
     const loggedIn = localStorage.getItem('isLoggedIn');
     const user = localStorage.getItem('currentUser');
     
     if (loggedIn === 'true' && user) {
-      const userData = JSON.parse(user);
+      let userData = JSON.parse(user);
+      
+      // If user doesn't have accessPermissions, try to load from users list
+      if (!userData.accessPermissions) {
+        const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
+        const systemUser = systemUsers.find(u => u.username === userData.username);
+        if (systemUser && systemUser.accessPermissions) {
+          userData = {
+            ...userData,
+            accessPermissions: systemUser.accessPermissions,
+            userRole: systemUser.userRole || userData.role
+          };
+          // Update stored user data
+          localStorage.setItem('currentUser', JSON.stringify(userData));
+        }
+      }
+      
       setIsLoggedIn(true);
       setCurrentUser(userData);
       
-      // Load branches
-      const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-      setBranches(allBranches.filter(b => b.status === 'Active'));
-      
-      // For admin: load selected branch from localStorage or use first branch
-      if (userData.role === 'Admin' || userData.role === 'admin') {
-        const savedBranchId = localStorage.getItem('adminSelectedBranch');
-        if (savedBranchId) {
-          const branch = allBranches.find(b => b.id.toString() === savedBranchId);
-          if (branch) {
-            setSelectedBranch(branch);
-            // Update currentUser branch for context
-            const updatedUser = { ...userData, branch: branch.id };
+      // Load branches from server first, then set selected branch
+      loadBranchesFromServer().then((loadedBranches) => {
+        // For admin: load selected branch from localStorage or use first branch
+        if (userData.role === 'Admin' || userData.role === 'admin') {
+          const savedBranchId = localStorage.getItem('adminSelectedBranch');
+          if (savedBranchId && loadedBranches.length > 0) {
+            const branch = loadedBranches.find(b => b.id.toString() === savedBranchId);
+            if (branch) {
+              setSelectedBranch(branch);
+              // Update currentUser branch for context
+              const updatedUser = { ...userData, branch: branch.id };
+              setCurrentUser(updatedUser);
+              localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+            }
+          } else if (loadedBranches.length > 0) {
+            setSelectedBranch(loadedBranches[0]);
+            const updatedUser = { ...userData, branch: loadedBranches[0].id };
             setCurrentUser(updatedUser);
             localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+            localStorage.setItem('adminSelectedBranch', loadedBranches[0].id.toString());
           }
-        } else if (allBranches.length > 0) {
-          setSelectedBranch(allBranches[0]);
-          const updatedUser = { ...userData, branch: allBranches[0].id };
-          setCurrentUser(updatedUser);
-          localStorage.setItem('currentUser', JSON.stringify(updatedUser));
-          localStorage.setItem('adminSelectedBranch', allBranches[0].id.toString());
-        }
-      } else {
-        // For non-admin: use their assigned branch
-        if (userData.branch) {
-          const branch = allBranches.find(b => b.id.toString() === userData.branch.toString());
-          if (branch) {
-            setSelectedBranch(branch);
+        } else {
+          // For non-admin: use their assigned branch
+          if (userData.branch && loadedBranches.length > 0) {
+            const branch = loadedBranches.find(b => b.id.toString() === userData.branch.toString());
+            if (branch) {
+              setSelectedBranch(branch);
+            }
           }
         }
-      }
+      });
     }
 
     // Listen for navigation events from child components
@@ -102,8 +136,15 @@ export default function TransportManagementApp() {
       sessionStorage.removeItem('navigateToHome');
     }
 
+    // Listen for data sync events to reload branches
+    const handleDataSync = () => {
+      loadBranchesFromServer();
+    };
+    window.addEventListener('dataSyncedFromServer', handleDataSync);
+
     return () => {
       window.removeEventListener('navigateToHome', handleNavigateToHome);
+      window.removeEventListener('dataSyncedFromServer', handleDataSync);
     };
   }, []);
 
@@ -114,7 +155,16 @@ export default function TransportManagementApp() {
       sessionStorage.removeItem('navigateToHome');
     };
 
+    const handleNavigateToView = (event) => {
+      const view = event.detail || sessionStorage.getItem('navigateToView');
+      if (view) {
+        setCurrentView(view);
+        sessionStorage.removeItem('navigateToView');
+      }
+    };
+
     window.addEventListener('navigateToHome', handleNavigateToHome);
+    window.addEventListener('navigateToView', handleNavigateToView);
 
     // Poll sessionStorage as a fallback (check every 100ms)
     const pollInterval = setInterval(() => {
@@ -122,10 +172,16 @@ export default function TransportManagementApp() {
         setCurrentView('home');
         sessionStorage.removeItem('navigateToHome');
       }
+      const navigateToView = sessionStorage.getItem('navigateToView');
+      if (navigateToView) {
+        setCurrentView(navigateToView);
+        sessionStorage.removeItem('navigateToView');
+      }
     }, 100);
 
     return () => {
       window.removeEventListener('navigateToHome', handleNavigateToHome);
+      window.removeEventListener('navigateToView', handleNavigateToView);
       clearInterval(pollInterval);
     };
   }, []);
@@ -208,10 +264,47 @@ export default function TransportManagementApp() {
     }
   ];
 
+  // Map permission keys to menu item IDs
+  const PERMISSION_TO_MODULES = {
+    'operations': ['lr-booking', 'ftl-booking', 'ftl-inquiry', 'ftl-inquiry-report', 'lr-modify', 'manifest', 'manifest-receive', 'pending-shipments', 'trip-management', 'pod', 'manage-pod'],
+    'lrBooking': ['lr-booking', 'ftl-booking', 'lr-modify'],
+    'clientMaster': ['client-master'],
+    'cityMaster': ['city-master'],
+    'vehicleMaster': ['vehicle-master'],
+    'driverMaster': ['driver-master'],
+    'staffMaster': ['staff-master'],
+    'branchMaster': ['branch-master'],
+    'marketVehicleVendor': ['market-vehicle-vendor'],
+    'otherVendor': ['other-vendor'],
+    'reports': ['reports', 'ftl-inquiry-report'],
+    'settings': ['user-master', 'lr-series', 'account-master', 'expense-master', 'branch-account', 'client-rate-master']
+  };
+
   const hasAccess = (moduleId) => {
     if (!currentUser) return false;
+    
+    // First check role-based access
     const userAccess = ACCESS_CONTROL[currentUser.role] || [];
-    return userAccess.includes(moduleId);
+    if (userAccess.includes(moduleId)) {
+      return true;
+    }
+    
+    // Then check individual user permissions
+    if (currentUser.accessPermissions) {
+      // Check if user has 'operations' permission and module is in operations category
+      if (currentUser.accessPermissions.operations && PERMISSION_TO_MODULES.operations.includes(moduleId)) {
+        return true;
+      }
+      
+      // Check other permissions
+      for (const [permissionKey, moduleIds] of Object.entries(PERMISSION_TO_MODULES)) {
+        if (currentUser.accessPermissions[permissionKey] && moduleIds.includes(moduleId)) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
   };
 
   const handleLogin = (user) => {
@@ -1388,6 +1481,7 @@ export default function TransportManagementApp() {
           {renderContent()}
         </div>
       </div>
+      <AutoDataSync />
     </div>
   );
 }

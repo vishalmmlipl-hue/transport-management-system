@@ -399,59 +399,106 @@ export default function FTLBookingForm() {
     setIsAdmin(user?.role === 'Admin' || user?.role === 'Super Admin');
   }, []);
 
-  // Function to load clients and other data
-  const loadData = () => {
-    const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-    const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
-    const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
-    const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-    
-    // Combine clients from both tbbClients and clients storage
-    const combinedClients = [...storedClients, ...allClients];
-    
-    // Only show active TBB clients (from both sources)
-    const activeTbbClients = combinedClients.filter(c => 
-      c.status === 'Active' && c.clientType === 'TBB'
-    );
-    // Remove duplicates based on id
-    const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
-      index === self.findIndex(c => c.id === client.id)
-    );
-    setTbbClients(uniqueTbbClients);
-    
-    // Load Sundry Creditor clients (TBB and Credit types) from both sources
-    const sundryCreditors = combinedClients.filter(c => 
-      c.status === 'Active' && 
-      (c.clientType === 'TBB' || c.clientType === 'Credit')
-    );
-    // Remove duplicates based on id
-    const uniqueSundryCreditors = sundryCreditors.filter((client, index, self) =>
-      index === self.findIndex(c => c.id === client.id)
-    );
-    setSundryCreditorClients(uniqueSundryCreditors);
-    
-    // Only show active cities
-    const activeCities = storedCities.filter(c => c.status === 'Active');
-    setCities(activeCities);
-    
-    // Only show active vehicles
-    const activeVehicles = storedVehicles.filter(v => v.status === 'Active');
-    setVehicles(activeVehicles);
-    
-    // Only show active branches
-    const activeBranches = storedBranches.filter(b => b.status === 'Active');
-    setBranches(activeBranches);
-    
-    // Load client rates (only active ones)
-    const activeClientRates = storedClientRates.filter(r => r.status === 'Active');
-    setClientRates(activeClientRates);
+  // Function to load clients and other data from server
+  const loadData = async () => {
+    try {
+      // Import syncService
+      const syncService = (await import('./utils/sync-service')).default;
+      
+      // Load from server first
+      const [branchesResult, citiesResult, vehiclesResult, clientsResult] = await Promise.all([
+        syncService.load('branches'),
+        syncService.load('cities'),
+        syncService.load('vehicles'),
+        syncService.load('clients')
+      ]);
+      
+      // Set branches (filter active)
+      const activeBranches = (branchesResult.data || []).filter(b => b.status === 'Active');
+      setBranches(activeBranches);
+      
+      // Set cities (filter active)
+      const activeCities = (citiesResult.data || []).filter(c => c.status === 'Active');
+      setCities(activeCities);
+      
+      // Set vehicles (filter active)
+      const activeVehicles = (vehiclesResult.data || []).filter(v => v.status === 'Active');
+      setVehicles(activeVehicles);
+      
+      // Load clients (fallback to localStorage for tbbClients)
+      const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
+      const allClients = clientsResult.data || [];
+      const combinedClients = [...storedClients, ...allClients];
+      
+      // Only show active TBB clients
+      const activeTbbClients = combinedClients.filter(c => 
+        c.status === 'Active' && c.clientType === 'TBB'
+      );
+      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
+        index === self.findIndex(c => c.id === client.id)
+      );
+      setTbbClients(uniqueTbbClients);
+      
+      // Load Sundry Creditor clients
+      const sundryCreditors = combinedClients.filter(c => 
+        c.status === 'Active' && 
+        (c.clientType === 'TBB' || c.clientType === 'Credit')
+      );
+      const uniqueSundryCreditors = sundryCreditors.filter((client, index, self) =>
+        index === self.findIndex(c => c.id === client.id)
+      );
+      setSundryCreditorClients(uniqueSundryCreditors);
+      
+      // Load client rates (from localStorage for now)
+      const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
+      const activeClientRates = storedClientRates.filter(r => r.status === 'Active');
+      setClientRates(activeClientRates);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      // Fallback to localStorage
+      const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
+      const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
+      const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
+      const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
+      const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+      const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
+      
+      const combinedClients = [...storedClients, ...allClients];
+      const activeTbbClients = combinedClients.filter(c => 
+        c.status === 'Active' && c.clientType === 'TBB'
+      );
+      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
+        index === self.findIndex(c => c.id === client.id)
+      );
+      setTbbClients(uniqueTbbClients);
+      const sundryCreditors = combinedClients.filter(c => 
+        c.status === 'Active' && 
+        (c.clientType === 'TBB' || c.clientType === 'Credit')
+      );
+      const uniqueSundryCreditors = sundryCreditors.filter((client, index, self) =>
+        index === self.findIndex(c => c.id === client.id)
+      );
+      setSundryCreditorClients(uniqueSundryCreditors);
+      setCities(storedCities.filter(c => c.status === 'Active'));
+      setVehicles(storedVehicles.filter(v => v.status === 'Active'));
+      setBranches(storedBranches.filter(b => b.status === 'Active'));
+      setClientRates(storedClientRates.filter(r => r.status === 'Active'));
+    }
   };
 
-  // Load clients, cities, vehicles, and branches from localStorage on component mount
+  // Load clients, cities, vehicles, and branches from server on component mount
   useEffect(() => {
     loadData();
+    
+    // Listen for sync events to reload
+    const handleSync = () => {
+      loadData();
+    };
+    window.addEventListener('dataSyncedFromServer', handleSync);
+    
+    return () => {
+      window.removeEventListener('dataSyncedFromServer', handleSync);
+    };
   }, []);
 
   // Listen for storage changes to reload clients when new ones are added

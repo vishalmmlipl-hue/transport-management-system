@@ -10,7 +10,7 @@ export default function ManifestReceiveForm() {
   const [currentBranch, setCurrentBranch] = useState(null);
   const [filterStatus, setFilterStatus] = useState('Pending'); // Pending, Received, All
   const [searchTerm, setSearchTerm] = useState('');
-  const [lrReceiptData, setLrReceiptData] = useState({}); // Track individual LR receipts: { lrId: { received: bool, receivedPieces: number, discrepancy: string } }
+  const [lrReceiptData, setLrReceiptData] = useState({}); // Track individual LR receipts: { lrId: { received: bool, receivedPieces: number, discrepancy: string, vendorLRNumber: string } }
   const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
   const [selectedLRForDiscrepancy, setSelectedLRForDiscrepancy] = useState(null);
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -25,6 +25,8 @@ export default function ManifestReceiveForm() {
   });
   const [searchResults, setSearchResults] = useState([]);
   const [selectedManifestForPrint, setSelectedManifestForPrint] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Load current user's branch from localStorage
   useEffect(() => {
@@ -39,13 +41,45 @@ export default function ManifestReceiveForm() {
     setVehicles(allVehicles.filter(v => v.status === 'Active'));
     setDrivers(allDrivers.filter(d => d.status === 'Active'));
     
-    // Try to get current branch from user or use first branch as default
-    // In real app, this would come from user's branch assignment
-    if (user && user.branch) {
-      const branch = allBranches.find(b => b.branchCode === user.branch || b.id.toString() === user.branch);
-      setCurrentBranch(branch || allBranches[0]);
-    } else {
-      setCurrentBranch(allBranches[0]);
+    // Get current user and admin status
+    let userIsAdmin = false;
+    if (user) {
+      setCurrentUser(user);
+      
+      // Check if admin
+      const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
+      const systemUser = systemUsers.find(u => u.username === user.username);
+      const userRole = systemUser?.userRole || user?.role || '';
+      userIsAdmin = userRole === 'Admin' || userRole === 'admin';
+      setIsAdmin(userIsAdmin);
+      
+      // Set current branch to logged-in user's branch
+      let userBranchId = null;
+      
+      // For admin, check adminSelectedBranch first
+      if (userIsAdmin) {
+        const adminSelectedBranchId = localStorage.getItem('adminSelectedBranch');
+        if (adminSelectedBranchId) {
+          userBranchId = adminSelectedBranchId;
+        }
+      }
+      
+      // Get branch from system user record
+      if (!userBranchId && systemUser && systemUser.branch) {
+        userBranchId = systemUser.branch;
+      } else if (!userBranchId && user.branch) {
+        userBranchId = user.branch;
+      }
+      
+      if (userBranchId) {
+        const branch = allBranches.find(b => 
+          b.id.toString() === userBranchId.toString() || 
+          b.branchCode === userBranchId.toString()
+        );
+        if (branch) {
+          setCurrentBranch(branch);
+        }
+      }
     }
   }, []);
 
@@ -96,18 +130,45 @@ export default function ManifestReceiveForm() {
     return null;
   };
 
-  // Filter manifests for current branch
+  // Get origin branch from manifest
+  const getOriginBranchFromManifest = (manifest) => {
+    if (manifest.branch) {
+      const branch = branches.find(b => 
+        b.id.toString() === manifest.branch.toString() || 
+        b.branchCode === manifest.branch
+      );
+      return branch;
+    }
+    return null;
+  };
+
+  // Filter manifests for current branch based on manifest type
   const getPendingManifests = () => {
     if (!currentBranch) return [];
     
     return manifests.filter(manifest => {
+      const manifestType = manifest.manifestType || 'branch'; // Default to branch for backward compatibility
+      const originBranch = getOriginBranchFromManifest(manifest);
       const destBranch = getDestinationBranch(manifest);
-      const isForThisBranch = destBranch && (
-        destBranch.id.toString() === currentBranch.id.toString() ||
-        destBranch.branchCode === currentBranch.branchCode
-      );
       
-      if (!isForThisBranch) return false;
+      // Check if current branch can receive this manifest
+      let canReceive = false;
+      
+      if (manifestType === 'branch') {
+        // Branch-to-branch: Only destination branch can receive (even admin must select destination branch)
+        canReceive = destBranch && (
+          destBranch.id.toString() === currentBranch.id.toString() ||
+          destBranch.branchCode === currentBranch.branchCode
+        );
+      } else if (manifestType === 'vendor') {
+        // Branch-to-vendor: Only origin branch can receive (for vendor return/receipt)
+        canReceive = originBranch && (
+          originBranch.id.toString() === currentBranch.id.toString() ||
+          originBranch.branchCode === currentBranch.branchCode
+        );
+      }
+      
+      if (!canReceive) return false;
       
       // Filter by status
       if (filterStatus === 'Pending') {
@@ -141,6 +202,31 @@ export default function ManifestReceiveForm() {
     if (manifestIndex === -1) return;
 
     const manifest = allManifests[manifestIndex];
+    
+    // Verify that current branch can receive this manifest
+    const manifestType = manifest.manifestType || 'branch';
+    const originBranch = getOriginBranchFromManifest(manifest);
+    const destBranch = getDestinationBranch(manifest);
+    
+    let canReceive = false;
+    if (manifestType === 'branch') {
+      // Branch-to-branch: Only destination branch can receive
+      canReceive = destBranch && (
+        destBranch.id.toString() === currentBranch.id.toString() ||
+        destBranch.branchCode === currentBranch.branchCode
+      );
+    } else if (manifestType === 'vendor') {
+      // Branch-to-vendor: Only origin branch can receive
+      canReceive = originBranch && (
+        originBranch.id.toString() === currentBranch.id.toString() ||
+        originBranch.branchCode === currentBranch.branchCode
+      );
+    }
+    
+    if (!canReceive) {
+      alert('⚠️ You can only receive manifests destined for your branch!');
+      return;
+    }
     const lrReceipts = manifest.lrReceipts || {};
     const isCurrentlyReceived = lrReceipts[lrId]?.received || false;
 
@@ -150,6 +236,7 @@ export default function ManifestReceiveForm() {
     } else {
       // Select - mark as received
       const expectedPieces = parseInt(lrData?.pieces || 0);
+      const manifestType = manifest.manifestType || 'branch';
       const newReceipt = {
         received: true,
         receivedAt: new Date().toISOString(),
@@ -157,7 +244,8 @@ export default function ManifestReceiveForm() {
         expectedPieces: expectedPieces,
         receivedPieces: expectedPieces, // Default to expected, user can change
         discrepancy: '',
-        remarks: ''
+        remarks: '',
+        vendorLRNumber: '' // For vendor manifests, store vendor's LR number
       };
       lrReceipts[lrId] = newReceipt;
       
@@ -199,7 +287,8 @@ export default function ManifestReceiveForm() {
         ...lrReceipts[lrId],
         receivedPieces: receivedPieces,
         discrepancy: receipt?.discrepancy || '',
-        remarks: receipt?.remarks || ''
+        remarks: receipt?.remarks || '',
+        vendorLRNumber: receipt?.vendorLRNumber || ''
       };
     } else {
       // Create new receipt entry
@@ -210,7 +299,8 @@ export default function ManifestReceiveForm() {
         expectedPieces: expectedPieces,
         receivedPieces: receivedPieces,
         discrepancy: receipt?.discrepancy || '',
-        remarks: receipt?.remarks || ''
+        remarks: receipt?.remarks || '',
+        vendorLRNumber: receipt?.vendorLRNumber || ''
       };
     }
 
@@ -228,6 +318,34 @@ export default function ManifestReceiveForm() {
   const handleReceiveManifest = (manifestId) => {
     if (!currentBranch) {
       alert('⚠️ Please select a branch first!');
+      return;
+    }
+    
+    // Verify that current branch can receive this manifest
+    const manifest = manifests.find(m => m.id === manifestId);
+    if (!manifest) return;
+    
+    const manifestType = manifest.manifestType || 'branch';
+    const originBranch = getOriginBranchFromManifest(manifest);
+    const destBranch = getDestinationBranch(manifest);
+    
+    let canReceive = false;
+    if (manifestType === 'branch') {
+      // Branch-to-branch: Only destination branch can receive
+      canReceive = destBranch && (
+        destBranch.id.toString() === currentBranch.id.toString() ||
+        destBranch.branchCode === currentBranch.branchCode
+      );
+    } else if (manifestType === 'vendor') {
+      // Branch-to-vendor: Only origin branch can receive
+      canReceive = originBranch && (
+        originBranch.id.toString() === currentBranch.id.toString() ||
+        originBranch.branchCode === currentBranch.branchCode
+      );
+    }
+    
+    if (!canReceive) {
+      alert('⚠️ You can only receive manifests destined for your branch!');
       return;
     }
 
@@ -528,19 +646,42 @@ export default function ManifestReceiveForm() {
           <div className="grid-4">
             <div className="input-group">
               <label>Current Branch</label>
-              <select
-                value={currentBranch?.id || ''}
-                onChange={(e) => {
-                  const branch = branches.find(b => b.id.toString() === e.target.value);
-                  setCurrentBranch(branch);
-                }}
-              >
-                {branches.map(branch => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.branchName} ({branch.branchCode})
-                  </option>
-                ))}
-              </select>
+              {isAdmin ? (
+                <select
+                  value={currentBranch?.id || ''}
+                  onChange={(e) => {
+                    const branch = branches.find(b => b.id.toString() === e.target.value);
+                    setCurrentBranch(branch);
+                    // Save admin's branch selection
+                    if (branch) {
+                      localStorage.setItem('adminSelectedBranch', branch.id.toString());
+                    }
+                  }}
+                >
+                  {branches.map(branch => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.branchName} ({branch.branchCode})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div style={{
+                  padding: '10px 12px',
+                  background: '#f8fafc',
+                  border: '2px solid #e2e8f0',
+                  borderRadius: '8px',
+                  fontSize: '0.95rem',
+                  color: '#1e293b',
+                  fontWeight: 500
+                }}>
+                  {currentBranch ? `${currentBranch.branchName} (${currentBranch.branchCode})` : 'No Branch Assigned'}
+                </div>
+              )}
+              {!isAdmin && currentBranch && (
+                <small style={{ display: 'block', marginTop: '4px', fontSize: '0.75rem', color: '#64748b' }}>
+                  Your assigned branch (cannot be changed)
+                </small>
+              )}
             </div>
             
             <div className="input-group">
@@ -609,6 +750,8 @@ export default function ManifestReceiveForm() {
               const originBranch = getOriginBranch(manifest);
               const destBranch = getDestinationBranch(manifest);
               const isReceived = manifest.receivedAt || manifest.status === 'Received';
+              const manifestType = manifest.manifestType || 'branch';
+              const isVendorManifest = manifestType === 'vendor';
               
               return (
                 <div key={manifest.id} className={`manifest-card ${isReceived ? 'received' : ''}`}>
@@ -637,7 +780,9 @@ export default function ManifestReceiveForm() {
                     <div>
                       <strong style={{ color: '#64748b' }}>Destination:</strong>
                       <div style={{ color: '#1e293b', marginTop: '4px' }}>
-                        {destBranch ? `${destBranch.branchName} (${destBranch.branchCode})` : 'N/A'}
+                        {isVendorManifest 
+                          ? (manifest.vendorName ? `Vendor: ${manifest.vendorName}` : 'Vendor')
+                          : (destBranch ? `${destBranch.branchName} (${destBranch.branchCode})` : 'N/A')}
                       </div>
                     </div>
                     <div>
@@ -689,6 +834,7 @@ export default function ManifestReceiveForm() {
                           const hasDiscrepancy = receivedPieces !== expectedPieces;
                           const discrepancy = lrReceipt?.discrepancy || '';
                           const remarks = lrReceipt?.remarks || '';
+                          const vendorLRNumber = lrReceipt?.vendorLRNumber || '';
                           
                           return (
                             <div key={idx} style={{ 
@@ -748,7 +894,7 @@ export default function ManifestReceiveForm() {
                                 {getCityName(origin)} → {getCityName(destination)}
                               </div>
                               
-                              {isReceived && (discrepancy || remarks) && (
+                              {isReceived && (discrepancy || remarks || (isVendorManifest && vendorLRNumber)) && (
                                 <div style={{ 
                                   marginTop: '8px', 
                                   padding: '8px', 
@@ -756,6 +902,11 @@ export default function ManifestReceiveForm() {
                                   borderRadius: '4px',
                                   fontSize: '0.75rem'
                                 }}>
+                                  {isVendorManifest && vendorLRNumber && (
+                                    <div style={{ marginBottom: '4px', color: '#059669', fontWeight: 600 }}>
+                                      <strong>Vendor LR No:</strong> <span className="mono">{vendorLRNumber}</span>
+                                    </div>
+                                  )}
                                   {discrepancy && (
                                     <div style={{ marginBottom: '4px' }}>
                                       <strong>Discrepancy:</strong> {discrepancy}
@@ -879,7 +1030,11 @@ export default function ManifestReceiveForm() {
       </div>
 
       {/* Discrepancy Modal */}
-      {showDiscrepancyModal && selectedLRForDiscrepancy && (
+      {showDiscrepancyModal && selectedLRForDiscrepancy && (() => {
+        const manifest = manifests.find(m => m.id === selectedLRForDiscrepancy.manifestId);
+        const isVendorManifest = manifest && (manifest.manifestType === 'vendor');
+        
+        return (
         <div style={{
           position: 'fixed',
           top: 0,
@@ -976,6 +1131,40 @@ export default function ManifestReceiveForm() {
               </select>
             </div>
 
+            {isVendorManifest && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#475569', marginBottom: '6px' }}>
+                  Vendor LR Number *
+                </label>
+                <input
+                  type="text"
+                  value={selectedLRForDiscrepancy.receipt?.vendorLRNumber || ''}
+                  onChange={(e) => {
+                    setSelectedLRForDiscrepancy(prev => ({
+                      ...prev,
+                      receipt: {
+                        ...prev.receipt,
+                        vendorLRNumber: e.target.value
+                      }
+                    }));
+                  }}
+                  placeholder="Enter vendor's LR number"
+                  className="mono"
+                  required={isVendorManifest}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    border: '2px solid #e2e8f0',
+                    borderRadius: '8px',
+                    fontSize: '0.95rem'
+                  }}
+                />
+                <small style={{ display: 'block', marginTop: '4px', fontSize: '0.75rem', color: '#64748b' }}>
+                  Enter the LR number assigned by the vendor for this shipment
+                </small>
+              </div>
+            )}
+
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#475569', marginBottom: '6px' }}>
                 Remarks
@@ -1046,7 +1235,8 @@ export default function ManifestReceiveForm() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Search Manifest Modal */}
       {showSearchModal && (

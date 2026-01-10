@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import syncService from '../utils/sync-service';
 
 const ModifyLR = () => {
   const [bookings, setBookings] = useState([]);
@@ -10,10 +11,18 @@ const ModifyLR = () => {
     loadBookings();
   }, []);
 
-  const loadBookings = () => {
-    const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-    const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-    setBookings([...ftlBookings, ...ptlBookings]);
+  const loadBookings = async () => {
+    try {
+      const ftlResult = await syncService.load('ftlLRBookings');
+      const ptlResult = await syncService.load('ptlLRBookings');
+      setBookings([...ftlResult.data, ...ptlResult.data]);
+    } catch (error) {
+      console.error('Error loading bookings:', error);
+      // Fallback to localStorage
+      const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
+      const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+      setBookings([...ftlBookings, ...ptlBookings]);
+    }
   };
 
   const handleSelectBooking = (booking) => {
@@ -60,7 +69,7 @@ const ModifyLR = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedBooking) {
       alert('Please select a booking to modify');
@@ -73,21 +82,25 @@ const ModifyLR = () => {
         updatedAt: new Date().toISOString()
       };
 
-      if (selectedBooking.type === 'PTL') {
-        const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-        const updated = ptlBookings.map(b => b.id === selectedBooking.id ? updatedBooking : b);
-        localStorage.setItem('ptlLRBookings', JSON.stringify(updated));
-      } else {
-        const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-        const updated = ftlBookings.map(b => b.id === selectedBooking.id ? updatedBooking : b);
-        localStorage.setItem('ftlLRBookings', JSON.stringify(updated));
-      }
+      try {
+        const storageKey = selectedBooking.type === 'PTL' ? 'ptlLRBookings' : 'ftlLRBookings';
+        // Update in API server and localStorage
+        const result = await syncService.save(storageKey, updatedBooking, true, selectedBooking.id);
+        
+        if (result.synced) {
+          alert('Booking updated successfully and synced across all systems!');
+        } else {
+          alert('Booking updated successfully! (Saved locally - server may be unavailable)');
+        }
 
-      window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: selectedBooking.type === 'PTL' ? 'ptlBooking' : 'ftlBooking', data: updatedBooking } }));
-      alert('Booking updated successfully!');
-      loadBookings();
-      setSelectedBooking(null);
-      setFormData({});
+        window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: selectedBooking.type === 'PTL' ? 'ptlBooking' : 'ftlBooking', data: updatedBooking } }));
+        loadBookings();
+        setSelectedBooking(null);
+        setFormData({});
+      } catch (error) {
+        console.error('Error updating booking:', error);
+        alert('Error updating booking. Please try again.');
+      }
     }
   };
 

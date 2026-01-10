@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import syncService from '../utils/sync-service';
 
 const Manifest = () => {
   const [bookings, setBookings] = useState([]);
@@ -14,10 +15,18 @@ const Manifest = () => {
     loadBookings();
   }, []);
 
-  const loadBookings = () => {
-    const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-    const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-    setBookings([...ftlBookings, ...ptlBookings]);
+  const loadBookings = async () => {
+    try {
+      const ftlResult = await syncService.load('ftlLRBookings');
+      const ptlResult = await syncService.load('ptlLRBookings');
+      setBookings([...ftlResult.data, ...ptlResult.data]);
+    } catch (error) {
+      console.error('Error loading bookings:', error);
+      // Fallback to localStorage
+      const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
+      const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+      setBookings([...ftlBookings, ...ptlBookings]);
+    }
   };
 
   const handleSelectBooking = (bookingId) => {
@@ -30,7 +39,7 @@ const Manifest = () => {
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (selectedBookings.length === 0) {
       alert('Please select at least one LR booking');
@@ -48,20 +57,29 @@ const Manifest = () => {
       createdAt: new Date().toISOString()
     };
 
-    const manifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    manifests.push(manifest);
-    localStorage.setItem('manifests', JSON.stringify(manifests));
+    try {
+      // Save to API server and localStorage
+      const result = await syncService.save('manifests', manifest);
+      
+      if (result.synced) {
+        alert('Manifest created successfully and synced across all systems!');
+      } else {
+        alert('Manifest created successfully! (Saved locally - server may be unavailable)');
+      }
 
-    window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'manifest', data: manifest } }));
-    alert('Manifest created successfully!');
-    
-    setSelectedBookings([]);
-    setManifestData({
-      manifestNumber: '',
-      date: new Date().toISOString().split('T')[0],
-      vehicleNumber: '',
-      driverName: '',
-    });
+      window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'manifest', data: manifest } }));
+      
+      setSelectedBookings([]);
+      setManifestData({
+        manifestNumber: '',
+        date: new Date().toISOString().split('T')[0],
+        vehicleNumber: '',
+        driverName: '',
+      });
+    } catch (error) {
+      console.error('Error saving manifest:', error);
+      alert('Error saving manifest. Please try again.');
+    }
   };
 
   return (

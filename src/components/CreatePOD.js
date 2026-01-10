@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import syncService from '../utils/sync-service';
 
 const CreatePOD = () => {
   const [bookings, setBookings] = useState([]);
@@ -19,10 +20,18 @@ const CreatePOD = () => {
     loadBookings();
   }, []);
 
-  const loadBookings = () => {
-    const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-    const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-    setBookings([...ftlBookings, ...ptlBookings]);
+  const loadBookings = async () => {
+    try {
+      const ftlResult = await syncService.load('ftlLRBookings');
+      const ptlResult = await syncService.load('ptlLRBookings');
+      setBookings([...ftlResult.data, ...ptlResult.data]);
+    } catch (error) {
+      console.error('Error loading bookings:', error);
+      // Fallback to localStorage
+      const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
+      const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+      setBookings([...ftlBookings, ...ptlBookings]);
+    }
   };
 
   const handleChange = (e) => {
@@ -62,11 +71,11 @@ const CreatePOD = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (validateForm()) {
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         const podData = {
           id: Date.now().toString(),
           lrNumber: formData.lrNumber,
@@ -81,28 +90,36 @@ const CreatePOD = () => {
           createdAt: new Date().toISOString()
         };
 
-        const pods = JSON.parse(localStorage.getItem('pods') || '[]');
-        pods.push(podData);
-        localStorage.setItem('pods', JSON.stringify(pods));
+        try {
+          // Save to API server and localStorage
+          const result = await syncService.save('pods', podData);
+          
+          if (result.synced) {
+            alert('POD created successfully and synced across all systems!');
+          } else {
+            alert('POD created successfully! (Saved locally - server may be unavailable)');
+          }
 
-        window.dispatchEvent(new CustomEvent('podCreated', { detail: podData }));
-        window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'pod', data: podData } }));
-        
-        alert('POD created successfully!');
-        
-        setFormData({
-          lrNumber: '',
-          podFile: null,
-          podFileName: '',
-          idType: '',
-          idNumber: '',
-          mobileNumber: '',
-          vehicleNumber: '',
-          deliveryDate: '',
-          remarks: '',
-        });
-        const fileInput = document.querySelector('input[type="file"]');
-        if (fileInput) fileInput.value = '';
+          window.dispatchEvent(new CustomEvent('podCreated', { detail: podData }));
+          window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'pod', data: podData } }));
+          
+          setFormData({
+            lrNumber: '',
+            podFile: null,
+            podFileName: '',
+            idType: '',
+            idNumber: '',
+            mobileNumber: '',
+            vehicleNumber: '',
+            deliveryDate: '',
+            remarks: '',
+          });
+          const fileInput = document.querySelector('input[type="file"]');
+          if (fileInput) fileInput.value = '';
+        } catch (error) {
+          console.error('Error saving POD:', error);
+          alert('Error saving POD. Please try again.');
+        }
       };
       reader.readAsDataURL(formData.podFile);
     }

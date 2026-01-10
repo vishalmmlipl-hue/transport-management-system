@@ -1,53 +1,116 @@
-import React, { useState } from 'react';
-import { LogIn, User, Lock, AlertCircle, Database } from 'lucide-react';
-import initSampleData from './init-sample-data';
+import React, { useState, useEffect } from 'react';
+import { LogIn, User, Lock, AlertCircle, Calendar } from 'lucide-react';
 
 export default function LoginForm({ onLogin }) {
   const [formData, setFormData] = useState({
     username: '',
-    password: ''
+    password: '',
+    financialYear: ''
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Demo users with different roles
-  const demoUsers = [
-    { username: 'admin', password: 'admin123', role: 'Admin', name: 'Admin User' },
-    { username: 'manager', password: 'manager123', role: 'Manager', name: 'Branch Manager' },
-    { username: 'operator', password: 'operator123', role: 'Operator', name: 'LR Operator' },
-    { username: 'accountant', password: 'accountant123', role: 'Accountant', name: 'Accountant' },
-    { username: 'driver', password: 'driver123', role: 'Driver', name: 'Driver User' }
-  ];
+  // Admin user with all access
+  const adminUser = {
+    username: 'admin',
+    password: 'admin123',
+    role: 'Admin',
+    name: 'Admin User',
+    accessPermissions: {
+      clientMaster: true,
+      cityMaster: true,
+      vehicleMaster: true,
+      driverMaster: true,
+      staffMaster: true,
+      branchMaster: true,
+      marketVehicleVendor: true,
+      otherVendor: true,
+      operations: true,
+      lrBooking: true,
+      reports: true,
+      settings: true
+    }
+  };
+
+  // Generate financial year options (current year and next 2 years)
+  const getFinancialYears = () => {
+    const currentYear = new Date().getFullYear();
+    const years = [];
+    for (let i = 0; i < 3; i++) {
+      const year = currentYear + i;
+      years.push({
+        value: `${year}-${year + 1}`,
+        label: `${year}-${year + 1}`
+      });
+    }
+    return years;
+  };
+
+  // Set default financial year on mount
+  useEffect(() => {
+    const currentYear = new Date().getFullYear();
+    const defaultFY = `${currentYear}-${currentYear + 1}`;
+    setFormData(prev => ({ ...prev, financialYear: defaultFY }));
+    
+    // Also set in localStorage as default
+    if (!localStorage.getItem('financialYear')) {
+      localStorage.setItem('financialYear', defaultFY);
+    }
+  }, []);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
+    // Validate financial year
+    if (!formData.financialYear) {
+      setError('Please select a Financial Year');
+      setLoading(false);
+      return;
+    }
+
     // Simulate API call
     setTimeout(() => {
-      // Check credentials against demo users
-      const user = demoUsers.find(u => 
-        u.username === formData.username && u.password === formData.password
-      );
-
-      // Also check against users created in User Master
+      // Check admin credentials first
+      const isAdmin = formData.username === adminUser.username && formData.password === adminUser.password;
+      
+      // Check against users created in User Master
       const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
       const systemUser = systemUsers.find(u => 
         u.username === formData.username && u.password === formData.password && u.status === 'Active'
       );
 
-      if (user || systemUser) {
-        const authenticatedUser = user || {
-          username: systemUser.username,
-          role: systemUser.role,
-          name: systemUser.name,
-          branch: systemUser.branch || null // Include branch from system user
-        };
+      if (isAdmin || systemUser) {
+        let authenticatedUser;
+        
+        if (isAdmin) {
+          // Use admin user with all permissions
+          authenticatedUser = {
+            ...adminUser,
+            branch: null // Admin can select branch after login
+          };
+        } else {
+          // Use system user
+          authenticatedUser = {
+            username: systemUser.username,
+            role: systemUser.userRole || systemUser.role, // Use userRole if available
+            name: systemUser.username, // Use username as name if name not available
+            branch: systemUser.branch || null,
+            accessPermissions: systemUser.accessPermissions || {}, // Include access permissions
+            code: systemUser.code || null,
+            email: systemUser.email || null,
+            mobile: systemUser.mobile || null,
+            linkedStaff: systemUser.linkedStaff || null
+          };
+        }
 
         // Store session
         localStorage.setItem('currentUser', JSON.stringify(authenticatedUser));
         localStorage.setItem('isLoggedIn', 'true');
+        
+        // Store financial year
+        localStorage.setItem('financialYear', formData.financialYear);
         
         onLogin(authenticatedUser);
       } else {
@@ -191,40 +254,6 @@ export default function LoginForm({ onLogin }) {
           transform: none;
         }
         
-        .demo-credentials {
-          margin-top: 32px;
-          padding: 20px;
-          background: #f8fafc;
-          border-radius: 8px;
-          border: 2px dashed #cbd5e1;
-        }
-        
-        .demo-title {
-          font-size: 0.875rem;
-          font-weight: 600;
-          color: #475569;
-          margin-bottom: 12px;
-        }
-        
-        .demo-user {
-          background: white;
-          padding: 10px 12px;
-          border-radius: 6px;
-          margin-bottom: 8px;
-          font-size: 0.8rem;
-          display: flex;
-          justify-content: space-between;
-          border: 1px solid #e2e8f0;
-        }
-        
-        .demo-user:last-child {
-          margin-bottom: 0;
-        }
-        
-        .demo-role {
-          font-weight: 600;
-          color: #667eea;
-        }
       `}</style>
 
       <div className="login-card">
@@ -279,6 +308,27 @@ export default function LoginForm({ onLogin }) {
             </div>
           </div>
 
+          <div className="input-group">
+            <label className="input-label">Financial Year *</label>
+            <div className="input-wrapper">
+              <div className="input-icon">
+                <Calendar size={20} />
+              </div>
+              <select
+                className="input-field"
+                value={formData.financialYear}
+                onChange={(e) => setFormData(prev => ({ ...prev, financialYear: e.target.value }))}
+                required
+                style={{ paddingLeft: '44px', appearance: 'none', backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px' }}
+              >
+                <option value="">-- Select Financial Year --</option>
+                {getFinancialYears().map(fy => (
+                  <option key={fy.value} value={fy.value}>{fy.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           <button 
             type="submit" 
             className="login-button"
@@ -294,104 +344,6 @@ export default function LoginForm({ onLogin }) {
             )}
           </button>
         </form>
-
-        <div style={{
-          marginTop: '24px',
-          padding: '16px',
-          background: '#fef3c7',
-          border: '2px solid #fbbf24',
-          borderRadius: '8px',
-          textAlign: 'center'
-        }}>
-          <button
-            onClick={() => {
-              if (window.confirm('⚠️ This will replace all existing data with sample data. Are you sure you want to continue?')) {
-                // Clear existing data
-                localStorage.clear();
-                // Initialize sample data
-                initSampleData();
-                // Show success message
-                alert('✅ Sample data loaded successfully!\n\nYou can now login with:\n- admin / admin123\n- manager / manager123\n- operator / operator123\n- accountant / accountant123\n- driver / driver123');
-                // Reload the page
-                window.location.reload();
-              }
-            }}
-            style={{
-              width: '100%',
-              padding: '12px 20px',
-              background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-              border: 'none',
-              borderRadius: '8px',
-              color: 'white',
-              fontSize: '0.95rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseOver={(e) => {
-              e.target.style.transform = 'translateY(-2px)';
-              e.target.style.boxShadow = '0 4px 12px rgba(245,158,11,0.4)';
-            }}
-            onMouseOut={(e) => {
-              e.target.style.transform = 'translateY(0)';
-              e.target.style.boxShadow = 'none';
-            }}
-          >
-            <Database size={20} />
-            Initialize Sample Data
-          </button>
-          <p style={{ 
-            marginTop: '12px', 
-            fontSize: '0.8rem', 
-            color: '#78350f',
-            marginBottom: 0
-          }}>
-            Click to load sample data for testing and demonstration
-          </p>
-        </div>
-
-        <div className="demo-credentials">
-          <div className="demo-title">🔐 Demo Credentials (Click to copy)</div>
-          
-          <div className="demo-user" onClick={() => {
-            setFormData({ username: 'admin', password: 'admin123' });
-          }} style={{ cursor: 'pointer' }}>
-            <span><strong>admin</strong> / admin123</span>
-            <span className="demo-role">Admin</span>
-          </div>
-          
-          <div className="demo-user" onClick={() => {
-            setFormData({ username: 'manager', password: 'manager123' });
-          }} style={{ cursor: 'pointer' }}>
-            <span><strong>manager</strong> / manager123</span>
-            <span className="demo-role">Manager</span>
-          </div>
-          
-          <div className="demo-user" onClick={() => {
-            setFormData({ username: 'operator', password: 'operator123' });
-          }} style={{ cursor: 'pointer' }}>
-            <span><strong>operator</strong> / operator123</span>
-            <span className="demo-role">Operator</span>
-          </div>
-          
-          <div className="demo-user" onClick={() => {
-            setFormData({ username: 'accountant', password: 'accountant123' });
-          }} style={{ cursor: 'pointer' }}>
-            <span><strong>accountant</strong> / accountant123</span>
-            <span className="demo-role">Accountant</span>
-          </div>
-          
-          <div className="demo-user" onClick={() => {
-            setFormData({ username: 'driver', password: 'driver123' });
-          }} style={{ cursor: 'pointer' }}>
-            <span><strong>driver</strong> / driver123</span>
-            <span className="demo-role">Driver</span>
-          </div>
-        </div>
       </div>
     </div>
   );

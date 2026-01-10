@@ -20,6 +20,7 @@ export default function LRModifyForm() {
   const [selectedLRId, setSelectedLRId] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userBranch, setUserBranch] = useState(null);
   const [showCFTCalculator, setShowCFTCalculator] = useState(false);
   const [cftEntries, setCftEntries] = useState([{
     id: 1,
@@ -54,8 +55,29 @@ export default function LRModifyForm() {
     // Get current user
     const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
     setCurrentUser(user);
-    setIsAdmin(user?.role === 'Admin' || user?.role === 'Super Admin');
+    const userIsAdmin = user?.role === 'Admin' || user?.role === 'Super Admin';
+    setIsAdmin(userIsAdmin);
+    
+    // Get user's branch
+    if (user && !userIsAdmin) {
+      // For non-admin users, get branch from user object or from selectedBranch in localStorage
+      const selectedBranchId = localStorage.getItem('adminSelectedBranch');
+      const userBranchId = user.branch || selectedBranchId;
+      setUserBranch(userBranchId);
+    } else {
+      setUserBranch(null); // Admin can see all branches
+    }
   }, []);
+
+  // Helper function to check if LR belongs to user's branch
+  const isLRFromUserBranch = (lr) => {
+    if (isAdmin) return true; // Admin can see all LRs
+    if (!userBranch) return false; // If user has no branch, can't see any
+    
+    // Check if LR's branch matches user's branch
+    const lrBranch = lr.branch || lr.bookingBranch;
+    return lrBranch?.toString() === userBranch.toString();
+  };
 
   const loadLRData = () => {
     const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
@@ -67,7 +89,10 @@ export default function LRModifyForm() {
     const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
     const allClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
     
-    setLrBookings(allLRs);
+    // Filter LRs by branch for non-admin users
+    const filteredLRs = isAdmin ? allLRs : allLRs.filter(lr => isLRFromUserBranch(lr));
+    
+    setLrBookings(filteredLRs);
     setManifests(allManifests);
     setInvoices(allInvoices);
     setPods(allPods);
@@ -81,6 +106,16 @@ export default function LRModifyForm() {
     if (editLRId) {
       const lr = allLRs.find(l => l.id.toString() === editLRId.toString());
       if (lr) {
+        // Check if user has permission to view this LR
+        const lrBranch = lr.branch || lr.bookingBranch;
+        const canView = isAdmin || !userBranch || lrBranch?.toString() === userBranch.toString();
+        
+        if (!canView) {
+          alert('⚠️ You can only view LRs booked by your branch.');
+          sessionStorage.removeItem('editLRId');
+          return;
+        }
+        
         setCurrentLR(lr);
         setFormData({ ...lr });
         setViewMode('view'); // Reset to view mode when loading LR
@@ -624,6 +659,12 @@ export default function LRModifyForm() {
       return;
     }
 
+    // Check if user has permission to edit this LR (branch check)
+    if (!isLRFromUserBranch(currentLR)) {
+      alert('⚠️ You can only modify LRs booked by your branch.');
+      return;
+    }
+
     const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
     const lrIndex = allLRs.findIndex(lr => lr.id === currentLR.id);
     
@@ -711,8 +752,16 @@ export default function LRModifyForm() {
 
   const handleSelectLR = (lrId) => {
     setSelectedLRId(lrId);
-    const lr = lrBookings.find(l => l.id.toString() === lrId.toString());
+    // Load from all LRs, not just filtered ones
+    const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+    const lr = allLRs.find(l => l.id.toString() === lrId.toString());
     if (lr) {
+      // Check if user has permission to view this LR
+      if (!isLRFromUserBranch(lr)) {
+        alert('⚠️ You can only view LRs booked by your branch.');
+        return;
+      }
+      
       setCurrentLR(lr);
       setFormData({ ...lr });
       setViewMode('view'); // Reset to view mode when selecting a new LR

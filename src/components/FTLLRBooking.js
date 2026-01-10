@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import syncService from '../utils/sync-service';
 
 const FTLLRBooking = () => {
   const [formData, setFormData] = useState({
@@ -45,7 +46,7 @@ const FTLLRBooking = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (validateForm()) {
       const bookingData = {
@@ -55,29 +56,33 @@ const FTLLRBooking = () => {
         createdAt: new Date().toISOString()
       };
       
-      const existingBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-      const updatedBookings = [...existingBookings, bookingData];
-      localStorage.setItem('ftlLRBookings', JSON.stringify(updatedBookings));
-      
-      const allBookings = JSON.parse(localStorage.getItem('allLRBookings') || '[]');
-      allBookings.push(bookingData);
-      localStorage.setItem('allLRBookings', JSON.stringify(allBookings));
-      
-      window.dispatchEvent(new CustomEvent('lrBookingCreated', { detail: bookingData }));
-      window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'ftlBooking', data: bookingData } }));
-      
-      alert('FTL Booking submitted successfully!');
-      
-      setFormData({
-        lrNumber: '',
-        lrReferenceNumber: '',
-        fromLocation: '',
-        toLocation: '',
-        invoiceNumber: '',
-        ewaybillNumber: '',
-        ewaybillDate: '',
-        branch: '',
-      });
+      try {
+        // Save to API server and localStorage
+        const result = await syncService.save('ftlLRBookings', bookingData);
+        
+        if (result.synced) {
+          alert('FTL Booking submitted successfully and synced across all systems!');
+        } else {
+          alert('FTL Booking submitted successfully! (Saved locally - server may be unavailable)');
+        }
+        
+        window.dispatchEvent(new CustomEvent('lrBookingCreated', { detail: bookingData }));
+        window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'ftlBooking', data: bookingData } }));
+        
+        setFormData({
+          lrNumber: '',
+          lrReferenceNumber: '',
+          fromLocation: '',
+          toLocation: '',
+          invoiceNumber: '',
+          ewaybillNumber: '',
+          ewaybillDate: '',
+          branch: '',
+        });
+      } catch (error) {
+        console.error('Error saving FTL booking:', error);
+        alert('Error saving booking. Please try again.');
+      }
     }
   };
 

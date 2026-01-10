@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Save, MapPin, Search, RefreshCw, Database, AlertCircle, X } from 'lucide-react';
+import { Save, MapPin, Search, RefreshCw, Database, AlertCircle, X, Upload, Download, Plus, Edit2, Trash2 } from 'lucide-react';
 import initSampleData from './init-sample-data';
+import syncService from './utils/sync-service';
 
 export default function CityMasterForm() {
   const [cities, setCities] = useState([]);
@@ -12,6 +13,8 @@ export default function CityMasterForm() {
   const [duplicateWarning, setDuplicateWarning] = useState('');
   const cityInputRef = useRef(null);
   const suggestionsRef = useRef(null);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [bulkImportText, setBulkImportText] = useState('');
   
   const [formData, setFormData] = useState({
     cityCode: '',
@@ -55,10 +58,18 @@ export default function CityMasterForm() {
     };
   }, []);
 
-  const loadCities = () => {
-    const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    setCities(allCities);
-    setFilteredCities(allCities);
+  const loadCities = async () => {
+    try {
+      const result = await syncService.load('cities');
+      setCities(result.data);
+      setFilteredCities(result.data);
+    } catch (error) {
+      console.error('Error loading cities:', error);
+      // Fallback to localStorage
+      const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
+      setCities(allCities);
+      setFilteredCities(allCities);
+    }
   };
 
   const filterCities = () => {
@@ -164,76 +175,191 @@ export default function CityMasterForm() {
     'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry'
   ];
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    
-    const existingCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    
-    // Check for duplicate (same city name + same state)
-    const isDuplicate = existingCities.some(city => 
-      city.cityName.toLowerCase() === formData.cityName.toLowerCase() &&
-      city.state === formData.state &&
-      city.id !== formData.editingCityId // Exclude current city if editing
-    );
-
-    if (isDuplicate) {
-      const duplicateCity = existingCities.find(city => 
-        city.cityName.toLowerCase() === formData.cityName.toLowerCase() &&
-        city.state === formData.state
-      );
-      alert(`❌ Duplicate Entry!\n\nCity "${formData.cityName}" already exists in ${formData.state}.\n\nCity Code: ${duplicateCity.code}\n\nPlease use a different city name or state.`);
+  // Bulk import cities
+  const handleBulkImport = () => {
+    if (!bulkImportText.trim()) {
+      alert('⚠️ Please enter cities data');
       return;
     }
 
-    // Check if city code already exists
-    if (formData.cityCode) {
-      const codeExists = existingCities.some(city => 
-        city.code.toLowerCase() === formData.cityCode.toLowerCase() &&
-        city.id !== formData.editingCityId
-      );
-      if (codeExists) {
-        alert(`❌ City Code "${formData.cityCode}" already exists. Please use a different code.`);
+    const lines = bulkImportText.split('\n').filter(line => line.trim());
+    const existingCities = JSON.parse(localStorage.getItem('cities') || '[]');
+    const newCities = [];
+    const errors = [];
+    let successCount = 0;
+
+    lines.forEach((line, index) => {
+      const parts = line.split(',').map(p => p.trim());
+      
+      if (parts.length < 2) {
+        errors.push(`Line ${index + 1}: Invalid format. Expected: CityName, State, [Region], [Zone]`);
         return;
       }
-    }
-    
-    const newCity = {
-      id: formData.editingCityId || Date.now(),
-      code: formData.cityCode || `CITY${String(existingCities.length + 1).padStart(3, '0')}`,
-      cityName: formData.cityName.trim(),
-      state: formData.state,
-      region: formData.region.trim(),
-      zone: formData.zone,
-      pincodeRanges: formData.pincodeRanges.trim(),
-      isODA: formData.isODA,
-      distanceFromHub: formData.distanceFromHub,
-      transitDays: formData.transitDays,
-      status: formData.status,
-      remarks: formData.remarks.trim(),
-      createdAt: formData.editingCityId 
-        ? existingCities.find(c => c.id === formData.editingCityId)?.createdAt 
-        : new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
 
-    if (formData.editingCityId) {
-      // Update existing city
-      const index = existingCities.findIndex(c => c.id === formData.editingCityId);
-      if (index !== -1) {
-        existingCities[index] = newCity;
-        alert(`✅ City "${formData.cityName}" updated successfully!`);
+      const cityName = parts[0];
+      const state = parts[1];
+      const region = parts[2] || '';
+      const zone = parts[3] || 'North';
+
+      // Check for duplicate
+      const isDuplicate = existingCities.some(city => 
+        city.cityName.toLowerCase() === cityName.toLowerCase() &&
+        city.state === state
+      );
+
+      if (isDuplicate) {
+        errors.push(`Line ${index + 1}: "${cityName}, ${state}" already exists`);
+        return;
       }
-    } else {
-      // Add new city
-      existingCities.push(newCity);
-      alert(`✅ City "${formData.cityName}" created successfully!\n\nCity Code: ${newCity.code}\n\nThis city is now available for selection in LR booking forms.`);
+
+      // Check if state is valid
+      if (!indianStates.includes(state)) {
+        errors.push(`Line ${index + 1}: Invalid state "${state}"`);
+        return;
+      }
+
+      const cityCode = `CITY${String(existingCities.length + newCities.length + 1).padStart(3, '0')}`;
+      
+      newCities.push({
+        id: Date.now() + index,
+        code: cityCode,
+        cityName: cityName,
+        state: state,
+        region: region,
+        zone: zone,
+        pincodeRanges: '',
+        isODA: false,
+        distanceFromHub: '',
+        transitDays: '',
+        status: 'Active',
+        remarks: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+
+      successCount++;
+    });
+
+    if (newCities.length > 0) {
+      const updatedCities = [...existingCities, ...newCities];
+      localStorage.setItem('cities', JSON.stringify(updatedCities));
+      loadCities();
+      
+      let message = `✅ Successfully imported ${successCount} cities!\n\n`;
+      if (errors.length > 0) {
+        message += `⚠️ ${errors.length} errors:\n${errors.slice(0, 5).join('\n')}`;
+        if (errors.length > 5) {
+          message += `\n... and ${errors.length - 5} more`;
+        }
+      }
+      alert(message);
+      
+      setBulkImportText('');
+      setShowBulkImport(false);
+    } else if (errors.length > 0) {
+      alert(`❌ Import failed!\n\n${errors.slice(0, 10).join('\n')}${errors.length > 10 ? `\n... and ${errors.length - 10} more` : ''}`);
     }
+  };
+
+  // Export cities to CSV
+  const handleExportCities = () => {
+    const csv = [
+      ['City Code', 'City Name', 'State', 'Region', 'Zone', 'Pincode Ranges', 'ODA', 'Status'].join(','),
+      ...cities.map(city => [
+        city.code || '',
+        `"${city.cityName}"`,
+        `"${city.state || ''}"`,
+        `"${city.region || ''}"`,
+        city.zone || '',
+        `"${city.pincodeRanges || ''}"`,
+        city.isODA ? 'Yes' : 'No',
+        city.status || 'Active'
+      ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cities_export_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
     
-    localStorage.setItem('cities', JSON.stringify(existingCities));
-    loadCities(); // Reload cities list
-    
-    // Reset form
-    setFormData({
+    try {
+      // Load current cities to check for duplicates
+      const existingCities = cities;
+      
+      // Check for duplicate (same city name + same state)
+      const isDuplicate = existingCities.some(city => 
+        city.cityName.toLowerCase() === formData.cityName.toLowerCase() &&
+        city.state === formData.state &&
+        city.id !== formData.editingCityId // Exclude current city if editing
+      );
+
+      if (isDuplicate) {
+        const duplicateCity = existingCities.find(city => 
+          city.cityName.toLowerCase() === formData.cityName.toLowerCase() &&
+          city.state === formData.state
+        );
+        alert(`❌ Duplicate Entry!\n\nCity "${formData.cityName}" already exists in ${formData.state}.\n\nCity Code: ${duplicateCity.code}\n\nPlease use a different city name or state.`);
+        return;
+      }
+
+      // Check if city code already exists
+      if (formData.cityCode) {
+        const codeExists = existingCities.some(city => 
+          city.code.toLowerCase() === formData.cityCode.toLowerCase() &&
+          city.id !== formData.editingCityId
+        );
+        if (codeExists) {
+          alert(`❌ City Code "${formData.cityCode}" already exists. Please use a different code.`);
+          return;
+        }
+      }
+      
+      const newCity = {
+        id: formData.editingCityId || Date.now(),
+        code: formData.cityCode || `CITY${String(existingCities.length + 1).padStart(3, '0')}`,
+        cityName: formData.cityName.trim(),
+        state: formData.state,
+        region: formData.region.trim(),
+        zone: formData.zone,
+        pincodeRanges: formData.pincodeRanges.trim(),
+        isODA: formData.isODA,
+        distanceFromHub: formData.distanceFromHub,
+        transitDays: formData.transitDays,
+        status: formData.status,
+        remarks: formData.remarks.trim(),
+        createdAt: formData.editingCityId 
+          ? existingCities.find(c => c.id === formData.editingCityId)?.createdAt 
+          : new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const result = await syncService.save('cities', newCity, !!formData.editingCityId, formData.editingCityId);
+      
+      if (result.synced) {
+        if (formData.editingCityId) {
+          alert(`✅ City "${formData.cityName}" updated successfully and synced across all systems!`);
+        } else {
+          alert(`✅ City "${formData.cityName}" created successfully and synced across all systems!\n\nCity Code: ${newCity.code}\n\nThis city is now available for selection in LR booking forms.`);
+        }
+      } else {
+        if (formData.editingCityId) {
+          alert(`✅ City "${formData.cityName}" updated successfully! (Saved locally - server may be unavailable)`);
+        } else {
+          alert(`✅ City "${formData.cityName}" created successfully! (Saved locally - server may be unavailable)\n\nCity Code: ${newCity.code}`);
+        }
+      }
+      
+      await loadCities(); // Reload cities list
+      
+      // Reset form
+      setFormData({
       cityCode: '',
       cityName: '',
       state: '',
@@ -249,6 +375,10 @@ export default function CityMasterForm() {
     });
     setDuplicateWarning('');
     setShowSuggestions(false);
+    } catch (error) {
+      console.error('Error saving city:', error);
+      alert(`❌ Error saving city: ${error.message || 'Unknown error'}`);
+    }
   };
 
   return (
@@ -448,7 +578,33 @@ export default function CityMasterForm() {
         <div className="form-section" style={{ marginBottom: '30px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
             <h2 className="section-title" style={{ marginBottom: 0 }}>All Cities ({filteredCities.length})</h2>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setShowBulkImport(!showBulkImport)}
+                className="btn"
+                style={{ 
+                  background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+                  color: 'white',
+                  fontSize: '0.85rem',
+                  padding: '8px 16px'
+                }}
+              >
+                <Upload size={16} /> {showBulkImport ? 'Cancel Bulk Import' : 'Bulk Import Cities'}
+              </button>
+              <button
+                type="button"
+                onClick={handleExportCities}
+                className="btn"
+                style={{ 
+                  background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                  color: 'white',
+                  fontSize: '0.85rem',
+                  padding: '8px 16px'
+                }}
+              >
+                <Download size={16} /> Export to CSV
+              </button>
               <button
                 type="button"
                 onClick={handleReloadSampleData}
@@ -477,6 +633,70 @@ export default function CityMasterForm() {
               </button>
             </div>
           </div>
+
+          {/* Bulk Import Section */}
+          {showBulkImport && (
+            <div style={{
+              background: '#fef3c7',
+              border: '2px solid #fbbf24',
+              borderRadius: '12px',
+              padding: '20px',
+              marginBottom: '20px'
+            }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#92400e', marginBottom: '12px' }}>
+                📥 Bulk Import Cities
+              </h3>
+              <p style={{ fontSize: '0.9rem', color: '#78350f', marginBottom: '15px' }}>
+                Enter cities in the format: <strong>CityName, State, [Region], [Zone]</strong><br/>
+                One city per line. Example:<br/>
+                <code style={{ background: 'white', padding: '2px 6px', borderRadius: '4px' }}>
+                  Mumbai, Maharashtra, Mumbai Metropolitan, West<br/>
+                  Delhi, Delhi, NCR, North<br/>
+                  Bangalore, Karnataka, , South
+                </code>
+              </p>
+              <textarea
+                value={bulkImportText}
+                onChange={(e) => setBulkImportText(e.target.value)}
+                placeholder="Mumbai, Maharashtra, Mumbai Metropolitan, West&#10;Delhi, Delhi, NCR, North&#10;Bangalore, Karnataka, , South"
+                rows="8"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '2px solid #fbbf24',
+                  borderRadius: '8px',
+                  fontFamily: 'monospace',
+                  fontSize: '0.9rem',
+                  marginBottom: '12px'
+                }}
+              />
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={handleBulkImport}
+                  className="btn btn-primary"
+                  style={{ padding: '10px 24px' }}
+                >
+                  <Upload size={16} /> Import Cities
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBulkImport(false);
+                    setBulkImportText('');
+                  }}
+                  className="btn"
+                  style={{
+                    background: '#64748b',
+                    color: 'white',
+                    padding: '10px 24px'
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Search and Filter */}
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '15px', marginBottom: '20px' }}>
@@ -530,6 +750,7 @@ export default function CityMasterForm() {
                     <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, color: '#475569' }}>Zone</th>
                     <th style={{ padding: '12px', textAlign: 'center', fontWeight: 600, color: '#475569' }}>Status</th>
                     <th style={{ padding: '12px', textAlign: 'center', fontWeight: 600, color: '#475569' }}>ODA</th>
+                    <th style={{ padding: '12px', textAlign: 'center', fontWeight: 600, color: '#475569' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -583,6 +804,73 @@ export default function CityMasterForm() {
                         ) : (
                           <span style={{ color: '#94a3b8' }}>-</span>
                         )}
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormData({
+                                cityCode: city.code || '',
+                                cityName: city.cityName || '',
+                                state: city.state || '',
+                                region: city.region || '',
+                                zone: city.zone || 'North',
+                                pincodeRanges: city.pincodeRanges || '',
+                                isODA: city.isODA || false,
+                                distanceFromHub: city.distanceFromHub || '',
+                                transitDays: city.transitDays || '',
+                                status: city.status || 'Active',
+                                remarks: city.remarks || '',
+                                editingCityId: city.id
+                              });
+                              setDuplicateWarning('');
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              background: '#3b82f6',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            title="Edit City"
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to delete "${city.cityName}, ${city.state}"?`)) {
+                                const existingCities = JSON.parse(localStorage.getItem('cities') || '[]');
+                                const updated = existingCities.filter(c => c.id !== city.id);
+                                localStorage.setItem('cities', JSON.stringify(updated));
+                                loadCities();
+                                alert(`✅ City "${city.cityName}" deleted successfully!`);
+                              }
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              background: '#ef4444',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            title="Delete City"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -796,12 +1084,12 @@ export default function CityMasterForm() {
               </div>
               
               <div className="input-group">
-                <label>Pincode Ranges</label>
+                <label>Pincode Ranges (Optional)</label>
                 <input
                   type="text"
                   value={formData.pincodeRanges}
                   onChange={(e) => setFormData(prev => ({ ...prev, pincodeRanges: e.target.value }))}
-                  placeholder="e.g., 400001-400099, 421201"
+                  placeholder="e.g., 400001-400099, 421201 (Optional)"
                 />
               </div>
               
@@ -877,19 +1165,104 @@ export default function CityMasterForm() {
           {/* Submit Button */}
           <div style={{ textAlign: 'center', marginTop: '30px' }}>
             <button type="submit" className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '14px 40px' }}>
-              <Save size={20} /> Save City Master
+              <Save size={20} /> {formData.editingCityId ? 'Update City' : 'Add City'}
             </button>
+            {formData.editingCityId && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData({
+                    cityCode: '',
+                    cityName: '',
+                    state: '',
+                    region: '',
+                    zone: 'North',
+                    pincodeRanges: '',
+                    isODA: false,
+                    distanceFromHub: '',
+                    transitDays: '',
+                    status: 'Active',
+                    remarks: '',
+                    editingCityId: undefined
+                  });
+                  setDuplicateWarning('');
+                }}
+                className="btn"
+                style={{
+                  marginLeft: '12px',
+                  background: '#64748b',
+                  color: 'white',
+                  fontSize: '1.1rem',
+                  padding: '14px 40px'
+                }}
+              >
+                Cancel Edit
+              </button>
+            )}
           </div>
         </form>
 
-        {/* Add New City Section */}
+        {/* Quick Actions Section */}
         <div style={{ marginTop: '30px', padding: '20px', background: '#f8fafc', borderRadius: '12px', border: '2px dashed #cbd5e1' }}>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 600, color: '#1e293b', marginBottom: '15px', textAlign: 'center' }}>
-            Add New City
+            Quick Actions
           </h2>
-          <p style={{ textAlign: 'center', color: '#64748b', marginBottom: '20px', fontSize: '0.9rem' }}>
-            Use the form above to add a new city to the system
-          </p>
+          <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setFormData({
+                  cityCode: '',
+                  cityName: '',
+                  state: '',
+                  region: '',
+                  zone: 'North',
+                  pincodeRanges: '',
+                  isODA: false,
+                  distanceFromHub: '',
+                  transitDays: '',
+                  status: 'Active',
+                  remarks: '',
+                  editingCityId: undefined
+                });
+                setDuplicateWarning('');
+                document.querySelector('input[type="text"]')?.focus();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="btn"
+              style={{
+                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                color: 'white',
+                padding: '10px 20px'
+              }}
+            >
+              <Plus size={16} /> Add New City
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBulkImport(true)}
+              className="btn"
+              style={{
+                background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+                color: 'white',
+                padding: '10px 20px'
+              }}
+            >
+              <Upload size={16} /> Bulk Import
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCities}
+              className="btn"
+              style={{
+                background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                color: 'white',
+                padding: '10px 20px'
+              }}
+            >
+              <Download size={16} /> Export Cities
+            </button>
+          </div>
         </div>
       </div>
     </div>

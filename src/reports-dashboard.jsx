@@ -103,13 +103,20 @@ export default function ReportsDashboard() {
     }
   }, [isAdmin, branches, selectedBranch]);
 
-  // Get branch for LR based on booking branch or manifest destination
-  const getLRBranch = (lr) => {
+  // Get origin branch for LR (where it was booked)
+  const getLROriginBranch = (lr) => {
     if (lr.branch) {
-      const branch = branches.find(b => b.id.toString() === lr.branch.toString());
+      const branch = branches.find(b => 
+        b.id.toString() === lr.branch.toString() || 
+        b.branchCode === lr.branch
+      );
       if (branch) return branch;
     }
-    
+    return null;
+  };
+
+  // Get destination branch for LR (where it was delivered)
+  const getLRDestinationBranch = (lr) => {
     // Try to find from manifest
     const manifest = manifests.find(m => 
       m.selectedLRs?.some(mlr => {
@@ -118,15 +125,75 @@ export default function ReportsDashboard() {
       })
     );
     
-    if (manifest && manifest.destinationBranch) {
-      const branch = branches.find(b => 
-        b.id.toString() === manifest.destinationBranch.toString() || 
-        b.branchCode === manifest.destinationBranch
-      );
-      if (branch) return branch;
+    if (manifest) {
+      // For branch-to-branch manifests
+      if (manifest.manifestType === 'branch' && manifest.destinationBranch) {
+        const branch = branches.find(b => 
+          b.id.toString() === manifest.destinationBranch.toString() || 
+          b.branchCode === manifest.destinationBranch
+        );
+        if (branch) return branch;
+      }
+      // For vendor manifests, destination is the vendor (not a branch)
+      // But we can check if the manifest origin matches user's branch (forwarded by them)
     }
     
     return null;
+  };
+
+  // Get manifest origin branch (who forwarded it)
+  const getManifestOriginBranch = (manifest) => {
+    if (manifest.branch) {
+      const branch = branches.find(b => 
+        b.id.toString() === manifest.branch.toString() || 
+        b.branchCode === manifest.branch
+      );
+      if (branch) return branch;
+    }
+    return null;
+  };
+
+  // Check if LR should be visible to the selected branch
+  const isLRVisibleToBranch = (lr, branch) => {
+    if (!branch) return true; // Admin viewing all branches
+    
+    // Check if LR was booked by this branch
+    const originBranch = getLROriginBranch(lr);
+    if (originBranch && (
+      originBranch.id.toString() === branch.id.toString() ||
+      originBranch.branchCode === branch.branchCode
+    )) {
+      return true; // Booked by this branch
+    }
+    
+    // Check if LR was delivered to this branch
+    const destBranch = getLRDestinationBranch(lr);
+    if (destBranch && (
+      destBranch.id.toString() === branch.id.toString() ||
+      destBranch.branchCode === branch.branchCode
+    )) {
+      return true; // Delivered to this branch
+    }
+    
+    // Check if LR was forwarded by this branch (vendor manifest)
+    const manifest = manifests.find(m => 
+      m.selectedLRs?.some(mlr => {
+        const mlrId = typeof mlr === 'object' ? mlr.id : mlr;
+        return mlrId === lr.id;
+      })
+    );
+    
+    if (manifest && manifest.manifestType === 'vendor') {
+      const manifestOrigin = getManifestOriginBranch(manifest);
+      if (manifestOrigin && (
+        manifestOrigin.id.toString() === branch.id.toString() ||
+        manifestOrigin.branchCode === branch.branchCode
+      )) {
+        return true; // Forwarded by this branch
+      }
+    }
+    
+    return false;
   };
 
   // Calculate metrics
@@ -136,11 +203,17 @@ export default function ReportsDashboard() {
       const dateMatch = lr.bookingDate >= dateRange.from && lr.bookingDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      // Branch filter
-      if (selectedBranch) {
-        const lrBranch = getLRBranch(lr);
-        return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+      // Branch filter - for non-admin users, only show data related to their branch
+      if (!isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
       }
+      
+      // Admin users: filter by selected branch if one is selected
+      if (isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
+      }
+      
+      // Admin viewing all branches
       return true;
     });
     
@@ -148,15 +221,75 @@ export default function ReportsDashboard() {
       const dateMatch = trip.tripDate >= dateRange.from && trip.tripDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      // Branch filter - trips are linked to manifests which have branches
-      if (selectedBranch) {
-        const manifest = manifests.find(m => m.id === trip.manifestId);
-        if (manifest && manifest.destinationBranch) {
-          return manifest.destinationBranch.toString() === selectedBranch.id.toString();
+      // Branch filter - trips are linked to manifests
+      if (!isAdmin && selectedBranch) {
+        const manifest = manifests.find(m => 
+          m.id === trip.manifestId || 
+          m.manifestNumber === trip.manifestNumber ||
+          m.id?.toString() === trip.manifestId?.toString()
+        );
+        
+        if (manifest) {
+          // Check if trip origin branch matches (forwarded by this branch)
+          const manifestOrigin = getManifestOriginBranch(manifest);
+          if (manifestOrigin && (
+            manifestOrigin.id.toString() === selectedBranch.id.toString() ||
+            manifestOrigin.branchCode === selectedBranch.branchCode
+          )) {
+            return true; // Forwarded by this branch
+          }
+          
+          // Check if trip destination branch matches (delivered to this branch)
+          if (manifest.manifestType === 'branch' && manifest.destinationBranch) {
+            const destBranch = branches.find(b => 
+              b.id.toString() === manifest.destinationBranch.toString() || 
+              b.branchCode === manifest.destinationBranch
+            );
+            if (destBranch && (
+              destBranch.id.toString() === selectedBranch.id.toString() ||
+              destBranch.branchCode === selectedBranch.branchCode
+            )) {
+              return true; // Delivered to this branch
+            }
+          }
         }
         return false;
       }
-      return true;
+      
+      // Admin users: filter by selected branch if one is selected
+      if (isAdmin && selectedBranch) {
+        const manifest = manifests.find(m => 
+          m.id === trip.manifestId || 
+          m.manifestNumber === trip.manifestNumber ||
+          m.id?.toString() === trip.manifestId?.toString()
+        );
+        
+        if (manifest) {
+          const manifestOrigin = getManifestOriginBranch(manifest);
+          if (manifestOrigin && (
+            manifestOrigin.id.toString() === selectedBranch.id.toString() ||
+            manifestOrigin.branchCode === selectedBranch.branchCode
+          )) {
+            return true;
+          }
+          
+          if (manifest.manifestType === 'branch' && manifest.destinationBranch) {
+            const destBranch = branches.find(b => 
+              b.id.toString() === manifest.destinationBranch.toString() || 
+              b.branchCode === manifest.destinationBranch
+            );
+            if (destBranch && (
+              destBranch.id.toString() === selectedBranch.id.toString() ||
+              destBranch.branchCode === selectedBranch.branchCode
+            )) {
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+      
+      return true; // Admin viewing all branches
     });
     
     let filteredInvoices = invoices.filter(inv => {
@@ -164,14 +297,20 @@ export default function ReportsDashboard() {
       if (!dateMatch) return false;
       
       // Branch filter - invoices linked to LRs
-      if (selectedBranch && inv.lrId) {
+      if (inv.lrId) {
         const lr = lrBookings.find(l => l.id.toString() === inv.lrId.toString());
         if (lr) {
-          const lrBranch = getLRBranch(lr);
-          return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+          if (!isAdmin && selectedBranch) {
+            return isLRVisibleToBranch(lr, selectedBranch);
+          }
+          if (isAdmin && selectedBranch) {
+            return isLRVisibleToBranch(lr, selectedBranch);
+          }
         }
       }
-      return !selectedBranch;
+      
+      // If no LR linked or admin viewing all
+      return !selectedBranch || isAdmin;
     });
     
     let filteredPayments = payments.filter(pay => {
@@ -179,17 +318,23 @@ export default function ReportsDashboard() {
       if (!dateMatch) return false;
       
       // Branch filter - payments linked to invoices/LRs
-      if (selectedBranch && pay.invoiceId) {
+      if (pay.invoiceId) {
         const inv = invoices.find(i => i.id.toString() === pay.invoiceId.toString());
         if (inv && inv.lrId) {
           const lr = lrBookings.find(l => l.id.toString() === inv.lrId.toString());
           if (lr) {
-            const lrBranch = getLRBranch(lr);
-            return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+            if (!isAdmin && selectedBranch) {
+              return isLRVisibleToBranch(lr, selectedBranch);
+            }
+            if (isAdmin && selectedBranch) {
+              return isLRVisibleToBranch(lr, selectedBranch);
+            }
           }
         }
       }
-      return !selectedBranch;
+      
+      // If no invoice/LR linked or admin viewing all
+      return !selectedBranch || isAdmin;
     });
     
     let filteredPODs = pods.filter(pod => {
@@ -197,18 +342,25 @@ export default function ReportsDashboard() {
       if (!dateMatch) return false;
       
       // Branch filter - PODs linked to LRs
-      if (selectedBranch && pod.lrNumber) {
+      if (pod.lrNumber) {
         const lr = lrBookings.find(l => 
           l.id.toString() === pod.lrNumber.toString() || 
           l.lrNumber === pod.lrNumber ||
-          l.id === pod.lrNumber
+          l.id === pod.lrNumber ||
+          (typeof pod.lrNumber === 'object' && pod.lrNumber.id && l.id.toString() === pod.lrNumber.id.toString())
         );
         if (lr) {
-          const lrBranch = getLRBranch(lr);
-          return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+          if (!isAdmin && selectedBranch) {
+            return isLRVisibleToBranch(lr, selectedBranch);
+          }
+          if (isAdmin && selectedBranch) {
+            return isLRVisibleToBranch(lr, selectedBranch);
+          }
         }
       }
-      return !selectedBranch;
+      
+      // If no LR linked or admin viewing all
+      return !selectedBranch || isAdmin;
     });
 
     // LR Metrics
@@ -371,11 +523,14 @@ export default function ReportsDashboard() {
       const dateMatch = lr.bookingDate >= dateRange.from && lr.bookingDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      if (selectedBranch) {
-        const lrBranch = getLRBranch(lr);
-        return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+      // Use the same filtering logic as calculateMetrics
+      if (!isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
       }
-      return true;
+      if (isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
+      }
+      return true; // Admin viewing all branches
     });
 
     const headers = [
@@ -387,7 +542,7 @@ export default function ReportsDashboard() {
     const rows = filteredLRs.map(lr => [
       lr.lrNumber || '',
       lr.bookingDate || '',
-      getLRBranch(lr)?.branchName || 'N/A',
+      getLROriginBranch(lr)?.branchName || 'N/A',
       lr.consignor?.name || '',
       lr.consignor?.contact || '',
       lr.consignee?.name || '',
@@ -419,14 +574,72 @@ export default function ReportsDashboard() {
       const dateMatch = trip.tripDate >= dateRange.from && trip.tripDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      if (selectedBranch) {
-        const manifest = manifests.find(m => m.id === trip.manifestId);
-        if (manifest && manifest.destinationBranch) {
-          return manifest.destinationBranch.toString() === selectedBranch.id.toString();
+      // Use the same filtering logic as calculateMetrics
+      if (!isAdmin && selectedBranch) {
+        const manifest = manifests.find(m => 
+          m.id === trip.manifestId || 
+          m.manifestNumber === trip.manifestNumber ||
+          m.id?.toString() === trip.manifestId?.toString()
+        );
+        
+        if (manifest) {
+          const manifestOrigin = getManifestOriginBranch(manifest);
+          if (manifestOrigin && (
+            manifestOrigin.id.toString() === selectedBranch.id.toString() ||
+            manifestOrigin.branchCode === selectedBranch.branchCode
+          )) {
+            return true; // Forwarded by this branch
+          }
+          
+          if (manifest.manifestType === 'branch' && manifest.destinationBranch) {
+            const destBranch = branches.find(b => 
+              b.id.toString() === manifest.destinationBranch.toString() || 
+              b.branchCode === manifest.destinationBranch
+            );
+            if (destBranch && (
+              destBranch.id.toString() === selectedBranch.id.toString() ||
+              destBranch.branchCode === selectedBranch.branchCode
+            )) {
+              return true; // Delivered to this branch
+            }
+          }
         }
         return false;
       }
-      return true;
+      
+      if (isAdmin && selectedBranch) {
+        const manifest = manifests.find(m => 
+          m.id === trip.manifestId || 
+          m.manifestNumber === trip.manifestNumber ||
+          m.id?.toString() === trip.manifestId?.toString()
+        );
+        
+        if (manifest) {
+          const manifestOrigin = getManifestOriginBranch(manifest);
+          if (manifestOrigin && (
+            manifestOrigin.id.toString() === selectedBranch.id.toString() ||
+            manifestOrigin.branchCode === selectedBranch.branchCode
+          )) {
+            return true;
+          }
+          
+          if (manifest.manifestType === 'branch' && manifest.destinationBranch) {
+            const destBranch = branches.find(b => 
+              b.id.toString() === manifest.destinationBranch.toString() || 
+              b.branchCode === manifest.destinationBranch
+            );
+            if (destBranch && (
+              destBranch.id.toString() === selectedBranch.id.toString() ||
+              destBranch.branchCode === selectedBranch.branchCode
+            )) {
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+      
+      return true; // Admin viewing all branches
     });
 
     const headers = [
@@ -470,14 +683,19 @@ export default function ReportsDashboard() {
       const dateMatch = inv.invoiceDate >= dateRange.from && inv.invoiceDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      if (selectedBranch && inv.lrId) {
+      if (inv.lrId) {
         const lr = lrBookings.find(l => l.id.toString() === inv.lrId.toString());
         if (lr) {
-          const lrBranch = getLRBranch(lr);
-          return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+          if (!isAdmin && selectedBranch) {
+            return isLRVisibleToBranch(lr, selectedBranch);
+          }
+          if (isAdmin && selectedBranch) {
+            return isLRVisibleToBranch(lr, selectedBranch);
+          }
         }
       }
-      return !selectedBranch;
+      
+      return !selectedBranch || isAdmin;
     });
 
     const headers = [
@@ -519,17 +737,22 @@ export default function ReportsDashboard() {
       const dateMatch = pay.paymentDate >= dateRange.from && pay.paymentDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      if (selectedBranch && pay.invoiceId) {
+      if (pay.invoiceId) {
         const inv = invoices.find(i => i.id.toString() === pay.invoiceId.toString());
         if (inv && inv.lrId) {
           const lr = lrBookings.find(l => l.id.toString() === inv.lrId.toString());
           if (lr) {
-            const lrBranch = getLRBranch(lr);
-            return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+            if (!isAdmin && selectedBranch) {
+              return isLRVisibleToBranch(lr, selectedBranch);
+            }
+            if (isAdmin && selectedBranch) {
+              return isLRVisibleToBranch(lr, selectedBranch);
+            }
           }
         }
       }
-      return !selectedBranch;
+      
+      return !selectedBranch || isAdmin;
     });
 
     const headers = [
@@ -569,18 +792,24 @@ export default function ReportsDashboard() {
       const dateMatch = pod.deliveryDate >= dateRange.from && pod.deliveryDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      if (selectedBranch && pod.lrNumber) {
+      if (pod.lrNumber) {
         const lr = lrBookings.find(l => 
           l.id.toString() === pod.lrNumber.toString() || 
           l.lrNumber === pod.lrNumber ||
-          l.id === pod.lrNumber
+          l.id === pod.lrNumber ||
+          (typeof pod.lrNumber === 'object' && pod.lrNumber.id && l.id.toString() === pod.lrNumber.id.toString())
         );
         if (lr) {
-          const lrBranch = getLRBranch(lr);
-          return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+          if (!isAdmin && selectedBranch) {
+            return isLRVisibleToBranch(lr, selectedBranch);
+          }
+          if (isAdmin && selectedBranch) {
+            return isLRVisibleToBranch(lr, selectedBranch);
+          }
         }
       }
-      return !selectedBranch;
+      
+      return !selectedBranch || isAdmin;
     });
 
     const headers = [
@@ -622,11 +851,14 @@ export default function ReportsDashboard() {
       const dateMatch = lr.bookingDate >= dateRange.from && lr.bookingDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      if (selectedBranch) {
-        const lrBranch = getLRBranch(lr);
-        return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+      // Use the same filtering logic as calculateMetrics
+      if (!isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
       }
-      return true;
+      if (isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
+      }
+      return true; // Admin viewing all branches
     });
 
     // Separate by payment mode
@@ -653,7 +885,7 @@ export default function ReportsDashboard() {
       paymentMode,
       lr.lrNumber || '',
       lr.bookingDate || '',
-      getLRBranch(lr)?.branchName || 'N/A',
+      getLROriginBranch(lr)?.branchName || 'N/A',
       lr.consignor?.name || '',
       lr.consignor?.contact || '',
       lr.consignee?.name || '',
@@ -711,9 +943,11 @@ export default function ReportsDashboard() {
       const dateMatch = lr.bookingDate >= dateRange.from && lr.bookingDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      if (selectedBranch) {
-        const lrBranch = getLRBranch(lr);
-        return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+      if (!isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
+      }
+      if (isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
       }
       return true;
     });
@@ -762,7 +996,7 @@ export default function ReportsDashboard() {
           group.clientName,
           lr.lrNumber || '',
           lr.bookingDate || '',
-          getLRBranch(lr)?.branchName || 'N/A',
+          getLROriginBranch(lr)?.branchName || 'N/A',
           lr.consignor?.name || '',
           lr.consignee?.name || '',
           lr.origin || '',
@@ -817,9 +1051,11 @@ export default function ReportsDashboard() {
       const dateMatch = lr.bookingDate >= dateRange.from && lr.bookingDate <= dateRange.to;
       if (!dateMatch) return false;
       
-      if (selectedBranch) {
-        const lrBranch = getLRBranch(lr);
-        return lrBranch && lrBranch.id.toString() === selectedBranch.id.toString();
+      if (!isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
+      }
+      if (isAdmin && selectedBranch) {
+        return isLRVisibleToBranch(lr, selectedBranch);
       }
       return true;
     });
@@ -879,7 +1115,7 @@ export default function ReportsDashboard() {
       category,
       lr.lrNumber || '',
       lr.bookingDate || '',
-      getLRBranch(lr)?.branchName || 'N/A',
+      getLROriginBranch(lr)?.branchName || 'N/A',
       lr.consignor?.name || '',
       lr.consignee?.name || '',
       getCityName(lr.origin),

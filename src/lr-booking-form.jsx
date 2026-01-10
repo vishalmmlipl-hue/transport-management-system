@@ -584,48 +584,88 @@ export default function LRBookingForm() {
     setIsAdmin(user?.role === 'Admin' || user?.role === 'Super Admin');
   }, []);
 
-  // Function to load clients and other data
-  const loadData = () => {
-    const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-    const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
-    const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
-    const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-    
-    // Combine clients from both tbbClients and clients storage
-    const combinedClients = [...storedClients, ...allClients];
-    
-    // Only show active TBB clients (from both sources)
-    const activeTbbClients = combinedClients.filter(c => 
-      c.status === 'Active' && c.clientType === 'TBB'
-    );
-    // Remove duplicates based on id
-    const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
-      index === self.findIndex(c => c.id === client.id)
-    );
-    setTbbClients(uniqueTbbClients);
-    
-    // Only show active cities
-    const activeCities = storedCities.filter(c => c.status === 'Active');
-    setCities(activeCities);
-    
-    // Only show active vehicles
-    const activeVehicles = storedVehicles.filter(v => v.status === 'Active');
-    setVehicles(activeVehicles);
-    
-    // Only show active branches
-    const activeBranches = storedBranches.filter(b => b.status === 'Active');
-    setBranches(activeBranches);
-    
-    // Load client rates (only active ones)
-    const activeClientRates = storedClientRates.filter(r => r.status === 'Active');
-    setClientRates(activeClientRates);
+  // Function to load clients and other data from server
+  const loadData = async () => {
+    try {
+      // Import syncService
+      const syncService = (await import('./utils/sync-service')).default;
+      
+      // Load from server first
+      const [branchesResult, citiesResult, vehiclesResult, clientsResult] = await Promise.all([
+        syncService.load('branches'),
+        syncService.load('cities'),
+        syncService.load('vehicles'),
+        syncService.load('clients')
+      ]);
+      
+      // Set branches (filter active)
+      const activeBranches = (branchesResult.data || []).filter(b => b.status === 'Active');
+      setBranches(activeBranches);
+      
+      // Set cities (filter active)
+      const activeCities = (citiesResult.data || []).filter(c => c.status === 'Active');
+      setCities(activeCities);
+      
+      // Set vehicles (filter active)
+      const activeVehicles = (vehiclesResult.data || []).filter(v => v.status === 'Active');
+      setVehicles(activeVehicles);
+      
+      // Load clients (fallback to localStorage for tbbClients)
+      const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
+      const allClients = clientsResult.data || [];
+      const combinedClients = [...storedClients, ...allClients];
+      
+      // Only show active TBB clients
+      const activeTbbClients = combinedClients.filter(c => 
+        c.status === 'Active' && c.clientType === 'TBB'
+      );
+      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
+        index === self.findIndex(c => c.id === client.id)
+      );
+      setTbbClients(uniqueTbbClients);
+      
+      // Load client rates (from localStorage for now)
+      const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
+      const activeClientRates = storedClientRates.filter(r => r.status === 'Active');
+      setClientRates(activeClientRates);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      // Fallback to localStorage
+      const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
+      const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
+      const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
+      const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
+      const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+      const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
+      
+      const combinedClients = [...storedClients, ...allClients];
+      const activeTbbClients = combinedClients.filter(c => 
+        c.status === 'Active' && c.clientType === 'TBB'
+      );
+      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
+        index === self.findIndex(c => c.id === client.id)
+      );
+      setTbbClients(uniqueTbbClients);
+      setCities(storedCities.filter(c => c.status === 'Active'));
+      setVehicles(storedVehicles.filter(v => v.status === 'Active'));
+      setBranches(storedBranches.filter(b => b.status === 'Active'));
+      setClientRates(storedClientRates.filter(r => r.status === 'Active'));
+    }
   };
 
-  // Load clients, cities, vehicles, and branches from localStorage on component mount
+  // Load clients, cities, vehicles, and branches from server on component mount
   useEffect(() => {
     loadData();
+    
+    // Listen for sync events to reload
+    const handleSync = () => {
+      loadData();
+    };
+    window.addEventListener('dataSyncedFromServer', handleSync);
+    
+    return () => {
+      window.removeEventListener('dataSyncedFromServer', handleSync);
+    };
   }, []);
 
   // Listen for storage changes to reload clients when new ones are added
@@ -1192,8 +1232,10 @@ export default function LRBookingForm() {
   const handleSubmit = (e) => {
     e.preventDefault();
     
-    // Save LR to localStorage
+    // Save LR to localStorage - save to both lrBookings and ptlLRBookings for compatibility
     const existingLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+    const existingPTLLRs = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+    
     const newLR = {
       id: Date.now(),
       ...formData,
@@ -1203,7 +1245,10 @@ export default function LRBookingForm() {
     };
     
     existingLRs.push(newLR);
+    existingPTLLRs.push(newLR);
+    
     localStorage.setItem('lrBookings', JSON.stringify(existingLRs));
+    localStorage.setItem('ptlLRBookings', JSON.stringify(existingPTLLRs));
     
     // Store saved LR ID and show dialog
     setLastSavedLRId(newLR.id);
@@ -1218,6 +1263,17 @@ export default function LRBookingForm() {
 
   const handleNextLRBooking = () => {
     setShowSaveDialog(false);
+    
+    // Check if we need to return to manifest edit
+    const returnToManifestEdit = localStorage.getItem('returnToManifestEdit');
+    if (returnToManifestEdit) {
+      // Navigate back to manifest form
+      sessionStorage.setItem('navigateToView', 'manifest');
+      window.dispatchEvent(new CustomEvent('navigateToView', { detail: 'manifest' }));
+      localStorage.removeItem('returnToManifestEdit');
+      return;
+    }
+    
     resetForm(true); // Reset form and generate next LR number
     setLastSavedLRId(null);
   };

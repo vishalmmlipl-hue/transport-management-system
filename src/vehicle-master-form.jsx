@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Save, Truck, Search, Loader, CheckCircle, AlertCircle } from 'lucide-react';
+import { Save, Truck, Search, Loader, CheckCircle, AlertCircle, Download } from 'lucide-react';
 import { vehiclesService, dataService } from './services/dataService';
+import * as XLSX from 'xlsx';
 
 export default function VehicleMasterForm() {
   const [loadingVahan, setLoadingVahan] = useState(false);
@@ -134,6 +135,115 @@ export default function VehicleMasterForm() {
     } finally {
       setLoadingVahan(false);
     }
+  };
+
+  // Generate Excel template for bulk vehicle import
+  const generateExcelTemplate = () => {
+    // Define headers
+    const headers = [
+      'Vehicle Number*',
+      'Vehicle Type*',
+      'Ownership Type*',
+      'Capacity*',
+      'Capacity Unit',
+      'RC Book Number',
+      'Owner Name*',
+      'Owner Address',
+      'Insurance Policy Number',
+      'Insurance Provider',
+      'Insurance Expiry Date (DD/MM/YYYY)',
+      'TP Permit Number',
+      'TP State',
+      'TP Expiry Date (DD/MM/YYYY)',
+      'Fitness Certificate Number',
+      'Fitness Expiry Date (DD/MM/YYYY)',
+      'Permit Number',
+      'Permit Type',
+      'Permit Expiry Date (DD/MM/YYYY)',
+      'Status',
+      'Remarks'
+    ];
+
+    // Sample data row with examples
+    const sampleRow = [
+      'MH12AB1234',
+      '20 FEET',
+      'Own',
+      '7.5',
+      'Tons',
+      'RC123456789',
+      'Multimode Logistics India Pvt Ltd',
+      'Mumbai, Maharashtra',
+      'INS123456',
+      'ICICI Lombard',
+      '31/12/2025',
+      'TP123456',
+      'Maharashtra',
+      '31/12/2025',
+      'FIT123456',
+      '31/12/2025',
+      'PER123456',
+      'National',
+      '31/12/2025',
+      'Active',
+      'Sample vehicle remarks'
+    ];
+
+    // Instructions rows
+    const instructions = [
+      ['Instructions:', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['* Required fields', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['Vehicle Type Options:', 'TATA ACE, PICKUP, 14 FEET, 17 FEET, 19 FEET, 20 FEET, 22 FEET, 24 FEET, 32 FEET EXL, 32 FEET MXL, 20 FEET TRAILER, 40 FEET TRAILER, Truck, Mini Truck, Tempo, Container 20ft, Container 40ft, Trailer, Others', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['Ownership Type Options:', 'Own, Market', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['Capacity Unit Options:', 'Tons, CFT, Kg', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['Permit Type Options:', 'National, State, Interstate', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['Status Options:', 'Active, Inactive, Under Maintenance, Sold', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      ['Date Format:', 'Use DD/MM/YYYY format (e.g., 31/12/2025)', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+      [], // Empty row
+      headers,
+      sampleRow
+    ];
+
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(instructions);
+
+    // Set column widths
+    ws['!cols'] = [
+      { wch: 20 }, // Vehicle Number
+      { wch: 15 }, // Vehicle Type
+      { wch: 15 }, // Ownership Type
+      { wch: 12 }, // Capacity
+      { wch: 12 }, // Capacity Unit
+      { wch: 15 }, // RC Book Number
+      { wch: 30 }, // Owner Name
+      { wch: 30 }, // Owner Address
+      { wch: 20 }, // Insurance Policy Number
+      { wch: 20 }, // Insurance Provider
+      { wch: 25 }, // Insurance Expiry Date
+      { wch: 15 }, // TP Permit Number
+      { wch: 15 }, // TP State
+      { wch: 20 }, // TP Expiry Date
+      { wch: 20 }, // Fitness Certificate Number
+      { wch: 20 }, // Fitness Expiry Date
+      { wch: 15 }, // Permit Number
+      { wch: 15 }, // Permit Type
+      { wch: 20 }, // Permit Expiry Date
+      { wch: 15 }, // Status
+      { wch: 30 }  // Remarks
+    ];
+
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'Vehicle Template');
+
+    // Generate filename with current date
+    const today = new Date().toISOString().split('T')[0];
+    const filename = `Vehicle_Master_Template_${today}.xlsx`;
+
+    // Write file
+    XLSX.writeFile(wb, filename);
+
+    alert(`✅ Excel template downloaded successfully!\n\nFilename: ${filename}\n\nPlease fill in the vehicle details and save the file. You can then import it using the bulk import feature.`);
   };
 
   const handleSubmit = async (e) => {
@@ -343,6 +453,24 @@ export default function VehicleMasterForm() {
             Vehicle Master
           </h1>
           <p className="text-slate-600 text-lg">Fleet Management System</p>
+          <div style={{ marginTop: '15px' }}>
+            <button
+              type="button"
+              onClick={generateExcelTemplate}
+              className="btn"
+              style={{
+                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                color: 'white',
+                padding: '10px 24px',
+                fontSize: '0.95rem'
+              }}
+            >
+              <Download size={18} /> Download Excel Template
+            </button>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '10px' }}>
+            Download Excel template to add multiple vehicles at once
+          </p>
         </div>
 
         <form onSubmit={handleSubmit}>

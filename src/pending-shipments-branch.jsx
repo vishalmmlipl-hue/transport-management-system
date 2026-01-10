@@ -227,11 +227,89 @@ export default function PendingShipmentsBranch() {
     return { status: 'Manifested', color: '#8b5cf6', icon: Package };
   };
 
+  // Helper function to check if LR is accessible to current branch
+  const isLRAccessible = (lr) => {
+    // Admin can see all LRs
+    if (isAdmin) {
+      // If admin has selected a branch, filter by that branch
+      if (selectedBranch) {
+        const lrBranch = branches.find(b => 
+          b.id.toString() === lr.branch?.toString() || 
+          b.branchCode === lr.branch
+        );
+        const isLRFromBranch = lrBranch && (
+          lrBranch.id.toString() === selectedBranch.id.toString() ||
+          lrBranch.branchCode === selectedBranch.branchCode
+        );
+        
+        // Find manifest containing this LR
+        const manifest = manifests.find(m => 
+          m.selectedLRs?.some(mlr => {
+            const mlrId = typeof mlr === 'object' ? mlr.id : mlr;
+            return mlrId === lr.id;
+          })
+        );
+        
+        if (manifest) {
+          // If manifested, only show if destined for selected branch
+          const destBranch = getDestinationBranch(manifest);
+          const isForSelectedBranch = destBranch && (
+            destBranch.id.toString() === selectedBranch.id.toString() ||
+            destBranch.branchCode === selectedBranch.branchCode
+          );
+          return isForSelectedBranch;
+        } else {
+          // If not manifested, show if booked by selected branch
+          return isLRFromBranch;
+        }
+      }
+      // Admin with no branch selected sees all
+      return true;
+    }
+    
+    // Non-admin users: only see LRs booked by their branch OR received by their branch
+    if (!selectedBranch) return false;
+    
+    // Check if LR was booked by user's branch
+    const lrBranch = branches.find(b => 
+      b.id.toString() === lr.branch?.toString() || 
+      b.branchCode === lr.branch
+    );
+    const isLRFromBranch = lrBranch && (
+      lrBranch.id.toString() === selectedBranch.id.toString() ||
+      lrBranch.branchCode === selectedBranch.branchCode
+    );
+    
+    // Check if LR is in a manifest
+    const manifest = manifests.find(m => 
+      m.selectedLRs?.some(mlr => {
+        const mlrId = typeof mlr === 'object' ? mlr.id : mlr;
+        return mlrId === lr.id;
+      })
+    );
+    
+    if (manifest) {
+      // If manifested, only show if destined for this branch (received by this branch)
+      const destBranch = getDestinationBranch(manifest);
+      const isForSelectedBranch = destBranch && (
+        destBranch.id.toString() === selectedBranch.id.toString() ||
+        destBranch.branchCode === selectedBranch.branchCode
+      );
+      return isForSelectedBranch;
+    } else {
+      // If not manifested, only show if booked by this branch (pending dispatch)
+      return isLRFromBranch;
+    }
+  };
+
   // Get pending shipments for selected branch
   const getPendingShipments = () => {
     if (!selectedBranch && !isAdmin) return [];
 
     let filteredLRs = lrBookings.filter(lr => {
+      // First check if LR is accessible to current branch/user
+      if (!isLRAccessible(lr)) return false;
+      
       // Get LR status
       const lrStatus = getLRStatus(lr);
       
@@ -256,8 +334,8 @@ export default function PendingShipmentsBranch() {
 
       // Include if:
       // 1. Pending for dispatch (not manifested, from this branch)
-      // 2. Manifested and destination is this branch
-      // 3. Delivered (POD exists)
+      // 2. Manifested and destination is this branch (received by this branch)
+      // 3. Delivered (POD exists) - if booked by or received by this branch
       
       if (!manifest) {
         // Not manifested - show if pending for dispatch from this branch
@@ -279,10 +357,13 @@ export default function PendingShipmentsBranch() {
       // For admin: filter by selected branch or show all
       if (isAdmin) {
         if (selectedBranch) {
+          // Admin with branch selected: show if booked by OR received by selected branch
           if (!isForSelectedBranch && !isLRFromBranch) return false;
         }
+        // Admin with no branch selected: show all (already filtered by isLRAccessible)
       } else {
         // For branch users: only show their branch (destination or origin)
+        // This is already handled by isLRAccessible, but double-check
         if (!isForSelectedBranch && !isLRFromBranch) return false;
       }
 

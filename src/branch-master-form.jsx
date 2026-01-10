@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Building2, MapPin, Phone, Mail, Plus, Trash2 } from 'lucide-react';
+import { Save, Building2, MapPin, Phone, Mail, Plus, Trash2, X, Edit2 } from 'lucide-react';
+import syncService from './utils/sync-service';
 
 export default function BranchMasterForm() {
   const [branches, setBranches] = useState([]);
   const [cities, setCities] = useState([]);
   const [selectedCity, setSelectedCity] = useState(null);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const [editingBranchId, setEditingBranchId] = useState(null);
 
   const [formData, setFormData] = useState({
     branchName: '',
@@ -24,13 +26,72 @@ export default function BranchMasterForm() {
     lrSeriesEnd: '',
     lrSeriesCurrent: '',
     lrPrefix: '',
-    status: 'Active'
+    status: 'Active',
+    nearbyCities: [], // Array of city IDs
+    odaLocations: [] // Array of city IDs for ODA locations
   });
+  
+  const [selectedNearbyCity, setSelectedNearbyCity] = useState('');
+  const [selectedODALocation, setSelectedODALocation] = useState('');
 
   useEffect(() => {
-    setBranches(JSON.parse(localStorage.getItem('branches') || '[]'));
-    setCities(JSON.parse(localStorage.getItem('cities') || '[]'));
+    loadBranches();
+    loadCities();
+    
+    // Listen for data sync events to reload branches
+    const handleDataSync = () => {
+      loadBranches();
+    };
+    window.addEventListener('dataSyncedFromServer', handleDataSync);
+    
+    return () => {
+      window.removeEventListener('dataSyncedFromServer', handleDataSync);
+    };
   }, []);
+
+  const loadBranches = async () => {
+    try {
+      // Force reload from server (not localStorage cache)
+      const result = await syncService.load('branches');
+      
+      // Filter out deleted/inactive branches - only show Active ones
+      // Also include branches without status (treat as Active for backward compatibility)
+      const activeBranches = (result.data || []).filter(b => 
+        b.status === 'Active' || !b.status || b.status === undefined
+      );
+      
+      setBranches(activeBranches);
+      
+      // Always update localStorage with fresh server data (even if empty)
+      // This ensures cache matches server
+      localStorage.setItem('branches', JSON.stringify(result.data || []));
+      
+      if (result.synced) {
+        console.log(`✅ Loaded ${activeBranches.length} active branches from server (total: ${result.data?.length || 0})`);
+      } else {
+        console.warn(`⚠️ Loaded ${activeBranches.length} branches from localStorage (server unavailable)`);
+      }
+    } catch (error) {
+      console.error('Error loading branches:', error);
+      // Fallback to localStorage
+      const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+      const activeBranches = allBranches.filter(b => 
+        b.status === 'Active' || !b.status || b.status === undefined
+      );
+      setBranches(activeBranches);
+    }
+  };
+
+  const loadCities = async () => {
+    try {
+      const result = await syncService.load('cities');
+      setCities(result.data);
+    } catch (error) {
+      console.error('Error loading cities:', error);
+      // Fallback to localStorage
+      setCities(JSON.parse(localStorage.getItem('cities') || '[]'));
+    }
+  };
 
   // Sync selectedCity when formData.city changes (for edit mode or external updates)
   useEffect(() => {
@@ -45,26 +106,130 @@ export default function BranchMasterForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.city, cities]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
-    const existingBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+    console.log('🚀 handleSubmit called!');
+    console.log('📋 Form data:', formData);
+    console.log('🆔 Editing branch ID:', editingBranchId);
     
-    const newBranch = {
-      id: Date.now(),
-      ...formData,
-      createdAt: new Date().toISOString()
-    };
+    try {
+      if (editingBranchId) {
+        // Update existing branch
+        console.log('✏️ Updating existing branch...');
+        const branchToUpdate = branches.find(b => b.id === editingBranchId);
+        if (branchToUpdate) {
+          const updatedBranch = {
+            ...branchToUpdate,
+            ...formData,
+            updatedAt: new Date().toISOString()
+          };
+          
+          console.log('🔄 Calling syncService.save() for update...');
+          const result = await syncService.save('branches', updatedBranch, true, editingBranchId);
+          console.log('📥 Update result:', result);
+          
+          if (result.synced) {
+            alert(`✅ Branch "${formData.branchName}" updated successfully and synced across all systems!`);
+          } else {
+            alert(`✅ Branch "${formData.branchName}" updated successfully! (Saved locally - server may be unavailable)`);
+          }
+          
+          await loadBranches();
+          resetForm();
+        }
+      } else {
+        // Create new branch
+        console.log('➕ Creating new branch...');
+        const newBranch = {
+          id: Date.now(),
+          ...formData,
+          createdAt: new Date().toISOString()
+        };
 
-    existingBranches.push(newBranch);
-    localStorage.setItem('branches', JSON.stringify(existingBranches));
-    setBranches(existingBranches);
+        console.log('📦 New branch data:', newBranch);
+        
+        // ALWAYS try direct API call first to ensure it saves to server
+        let savedToServer = false;
+        let serverResponseData = null;
+        
+        try {
+          console.log('🌐 Saving directly to server...');
+          const directResponse = await fetch('https://transport-management-system-wzhx.onrender.com/api/branches', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newBranch)
+          });
+          
+          console.log('📡 Response status:', directResponse.status);
+          const directResult = await directResponse.json();
+          console.log('📡 Response data:', directResult);
+          
+          if (directResult.success && directResult.data) {
+            savedToServer = true;
+            serverResponseData = directResult.data;
+            console.log('✅ Successfully saved to server!');
+          } else {
+            console.warn('⚠️ Server returned error:', directResult.error || 'Unknown error');
+          }
+        } catch (directError) {
+          console.error('❌ Direct API call failed:', directError);
+        }
+        
+        // Also try syncService for consistency
+        try {
+          console.log('🔄 Also calling syncService.save()...');
+          const result = await syncService.save('branches', newBranch);
+          console.log('📥 syncService result:', result);
+        } catch (error) {
+          console.warn('⚠️ syncService failed (but direct API may have worked):', error);
+        }
+        
+        // Update localStorage and show success
+        if (savedToServer && serverResponseData) {
+          // Update localStorage with server response
+          const existing = JSON.parse(localStorage.getItem('branches') || '[]');
+          // Remove if already exists (by id or branchCode)
+          const filtered = existing.filter(b => 
+            b.id !== serverResponseData.id && 
+            b.branchCode !== serverResponseData.branchCode
+          );
+          filtered.push(serverResponseData);
+          localStorage.setItem('branches', JSON.stringify(filtered));
+          
+          // Trigger sync event so other systems reload
+          window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+          
+          setShowSuccessMessage(true);
+          setTimeout(() => setShowSuccessMessage(false), 3000);
+          console.log('✅ Branch saved and synced!');
+        } else {
+          // Fallback: save to localStorage only
+          const existing = JSON.parse(localStorage.getItem('branches') || '[]');
+          existing.push(newBranch);
+          localStorage.setItem('branches', JSON.stringify(existing));
+          alert('Branch saved locally (server may be unavailable)');
+          console.warn('⚠️ Saved to localStorage only');
+        }
 
-    // Show success message
-    setShowSuccessMessage(true);
-    setTimeout(() => setShowSuccessMessage(false), 3000);
+        await loadBranches();
 
-    // Reset form but KEEP IT OPEN for next entry
+        // Reset form but KEEP IT OPEN for next entry
+        resetForm(true);
+
+        // Focus on first field for quick next entry
+        setTimeout(() => {
+          document.querySelector('input[name="branchName"]')?.focus();
+        }, 100);
+      }
+    } catch (error) {
+      console.error('❌ Error saving branch:', error);
+      console.error('❌ Error stack:', error.stack);
+      alert('Error saving branch: ' + error.message);
+    }
+  };
+
+  const resetForm = (keepOpen = false) => {
     setFormData({
       branchName: '',
       branchCode: '',
@@ -82,21 +247,122 @@ export default function BranchMasterForm() {
       lrSeriesEnd: '',
       lrSeriesCurrent: '',
       lrPrefix: '',
-      status: 'Active'
+      status: 'Active',
+      nearbyCities: [],
+      odaLocations: []
     });
     setSelectedCity(null);
-
-    // Focus on first field for quick next entry
-    setTimeout(() => {
-      document.querySelector('input[name="branchName"]')?.focus();
-    }, 100);
+    setSelectedNearbyCity('');
+    setSelectedODALocation('');
+    setEditingBranchId(null);
+    
+    if (!keepOpen) {
+      // Scroll to top when editing is done
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
-  const deleteBranch = (id) => {
-    if (window.confirm('Are you sure you want to delete this branch?')) {
-      const updated = branches.filter(b => b.id !== id);
-      localStorage.setItem('branches', JSON.stringify(updated));
-      setBranches(updated);
+  const handleEdit = (branch) => {
+    setEditingBranchId(branch.id);
+    
+    // Find the city object
+    const branchCity = cities.find(c => 
+      c.cityName === branch.city || 
+      c.id.toString() === branch.city?.toString()
+    );
+    
+    setFormData({
+      branchName: branch.branchName || '',
+      branchCode: branch.branchCode || '',
+      address: branch.address || '',
+      city: branch.city || '',
+      state: branch.state || '',
+      pincode: branch.pincode || '',
+      phone: branch.phone || '',
+      email: branch.email || '',
+      gstNumber: branch.gstNumber || '',
+      isHeadOffice: branch.isHeadOffice || false,
+      managerName: branch.managerName || '',
+      managerMobile: branch.managerMobile || '',
+      lrSeriesStart: branch.lrSeriesStart || '',
+      lrSeriesEnd: branch.lrSeriesEnd || '',
+      lrSeriesCurrent: branch.lrSeriesCurrent || '',
+      lrPrefix: branch.lrPrefix || '',
+      status: branch.status || 'Active',
+      nearbyCities: branch.nearbyCities || [],
+      odaLocations: branch.odaLocations || []
+    });
+    
+    setSelectedCity(branchCity || null);
+    
+    // Scroll to form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const deleteBranch = async (id) => {
+    if (window.confirm('Are you sure you want to delete this branch? This will remove it from all systems.')) {
+      try {
+        console.log(`🗑️ Deleting branch ID: ${id}`);
+        
+        // Try direct API delete first
+        let deleteSuccess = false;
+        try {
+          console.log('🌐 Attempting direct API delete...');
+          const deleteResponse = await fetch(`https://transport-management-system-wzhx.onrender.com/api/branches/${id}`, {
+            method: 'DELETE'
+          });
+          const deleteResult = await deleteResponse.json();
+          console.log('📡 Delete API response:', deleteResult);
+          
+          if (deleteResult.success) {
+            deleteSuccess = true;
+            console.log('✅ Direct API delete succeeded!');
+          } else {
+            console.warn('⚠️ Direct API delete failed:', deleteResult);
+          }
+        } catch (deleteError) {
+          console.error('❌ Direct API delete error:', deleteError);
+        }
+        
+        // Also try via databaseAPI
+        if (!deleteSuccess) {
+          try {
+            const databaseAPI = (await import('./utils/database-api')).default;
+            const deleted = await databaseAPI.delete('branches', id);
+            console.log('Delete API result:', deleted);
+            if (deleted === true) {
+              deleteSuccess = true;
+            }
+          } catch (error) {
+            console.error('❌ databaseAPI.delete error:', error);
+          }
+        }
+        
+        if (deleteSuccess) {
+          // Reload branches from server to get fresh data
+          await loadBranches();
+          
+          // Trigger sync event so other systems reload
+          window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+          
+          alert('✅ Branch deleted successfully and synced across all systems!');
+        } else {
+          console.warn('⚠️ Delete failed, marking as inactive');
+          // Fallback: mark as inactive
+          try {
+            await syncService.save('branches', { status: 'Inactive' }, true, id);
+            await loadBranches();
+            window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+            alert('Branch marked as inactive (delete may have failed - check console)');
+          } catch (error) {
+            console.error('❌ Error marking as inactive:', error);
+            alert('Error deleting branch. Please try again.');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error deleting branch:', error);
+        alert(`Error deleting branch: ${error.message}. Please check console for details.`);
+      }
     }
   };
 
@@ -270,9 +536,11 @@ export default function BranchMasterForm() {
       <div className="max-w-7xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-slate-800 mb-2">
-            🏢 Branch Master
+            🏢 Branch Master {editingBranchId && <span style={{ fontSize: '1.5rem', color: '#3b82f6' }}>(Editing)</span>}
           </h1>
-          <p className="text-slate-600 text-lg">Manage branch network with LR series allocation</p>
+          <p className="text-slate-600 text-lg">
+            {editingBranchId ? 'Update branch details, nearby cities, and ODA locations' : 'Manage branch network with LR series allocation'}
+          </p>
         </div>
 
         {/* Success Message */}
@@ -507,6 +775,238 @@ export default function BranchMasterForm() {
             </div>
           </div>
 
+          {/* Service Coverage */}
+          <div className="form-section">
+            <h2 className="section-title">Service Coverage</h2>
+            
+            {/* Nearby Cities */}
+            <div className="input-group" style={{ marginBottom: '24px' }}>
+              <label>Nearby Cities</label>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                <select
+                  value={selectedNearbyCity}
+                  onChange={(e) => setSelectedNearbyCity(e.target.value)}
+                  style={{ flex: 1 }}
+                >
+                  <option value="">-- Select City to Add --</option>
+                  {cities
+                    .filter(city => 
+                      city.status === 'Active' && 
+                      !formData.nearbyCities.includes(city.id.toString()) &&
+                      city.id.toString() !== (selectedCity?.id?.toString() || '')
+                    )
+                    .map(city => (
+                      <option key={city.id} value={city.id}>
+                        {city.cityName}, {city.state} {city.code ? `(${city.code})` : ''}
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    if (selectedNearbyCity && !formData.nearbyCities.includes(selectedNearbyCity)) {
+                      setFormData(prev => ({
+                        ...prev,
+                        nearbyCities: [...prev.nearbyCities, selectedNearbyCity]
+                      }));
+                      setSelectedNearbyCity('');
+                    }
+                  }}
+                  disabled={!selectedNearbyCity}
+                  style={{ padding: '10px 20px' }}
+                >
+                  <Plus size={16} />
+                  Add
+                </button>
+              </div>
+              
+              {formData.nearbyCities.length > 0 && (
+                <div style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                  padding: '12px',
+                  background: '#f8fafc',
+                  borderRadius: '8px',
+                  border: '2px solid #e2e8f0',
+                  minHeight: '50px'
+                }}>
+                  {formData.nearbyCities.map(cityId => {
+                    const city = cities.find(c => c.id.toString() === cityId.toString());
+                    if (!city) return null;
+                    return (
+                      <div
+                        key={cityId}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 12px',
+                          background: 'white',
+                          border: '2px solid #3b82f6',
+                          borderRadius: '20px',
+                          fontSize: '0.85rem',
+                          color: '#1e293b'
+                        }}
+                      >
+                        <span>{city.cityName}, {city.state}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData(prev => ({
+                              ...prev,
+                              nearbyCities: prev.nearbyCities.filter(id => id !== cityId)
+                            }));
+                          }}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: '0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            color: '#ef4444'
+                          }}
+                          title="Remove"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {formData.nearbyCities.length === 0 && (
+                <div style={{
+                  padding: '12px',
+                  background: '#f8fafc',
+                  borderRadius: '8px',
+                  border: '2px dashed #cbd5e1',
+                  textAlign: 'center',
+                  color: '#64748b',
+                  fontSize: '0.9rem'
+                }}>
+                  No nearby cities added. Select a city and click "Add" to include it.
+                </div>
+              )}
+            </div>
+
+            {/* ODA Locations */}
+            <div className="input-group">
+              <label>ODA Locations</label>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                <select
+                  value={selectedODALocation}
+                  onChange={(e) => setSelectedODALocation(e.target.value)}
+                  style={{ flex: 1 }}
+                >
+                  <option value="">-- Select ODA Location to Add --</option>
+                  {cities
+                    .filter(city => 
+                      city.status === 'Active' && 
+                      !formData.odaLocations.includes(city.id.toString()) &&
+                      city.id.toString() !== (selectedCity?.id?.toString() || '')
+                    )
+                    .map(city => (
+                      <option key={city.id} value={city.id}>
+                        {city.cityName}, {city.state} {city.code ? `(${city.code})` : ''}
+                        {city.isODA && <span> - ODA</span>}
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    if (selectedODALocation && !formData.odaLocations.includes(selectedODALocation)) {
+                      setFormData(prev => ({
+                        ...prev,
+                        odaLocations: [...prev.odaLocations, selectedODALocation]
+                      }));
+                      setSelectedODALocation('');
+                    }
+                  }}
+                  disabled={!selectedODALocation}
+                  style={{ padding: '10px 20px' }}
+                >
+                  <Plus size={16} />
+                  Add
+                </button>
+              </div>
+              
+              {formData.odaLocations.length > 0 && (
+                <div style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                  padding: '12px',
+                  background: '#fef3c7',
+                  borderRadius: '8px',
+                  border: '2px solid #fbbf24',
+                  minHeight: '50px'
+                }}>
+                  {formData.odaLocations.map(cityId => {
+                    const city = cities.find(c => c.id.toString() === cityId.toString());
+                    if (!city) return null;
+                    return (
+                      <div
+                        key={cityId}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '6px 12px',
+                          background: 'white',
+                          border: '2px solid #f59e0b',
+                          borderRadius: '20px',
+                          fontSize: '0.85rem',
+                          color: '#1e293b'
+                        }}
+                      >
+                        <span>{city.cityName}, {city.state}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData(prev => ({
+                              ...prev,
+                              odaLocations: prev.odaLocations.filter(id => id !== cityId)
+                            }));
+                          }}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: '0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            color: '#ef4444'
+                          }}
+                          title="Remove"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {formData.odaLocations.length === 0 && (
+                <div style={{
+                  padding: '12px',
+                  background: '#fef3c7',
+                  borderRadius: '8px',
+                  border: '2px dashed #fbbf24',
+                  textAlign: 'center',
+                  color: '#92400e',
+                  fontSize: '0.9rem'
+                }}>
+                  No ODA locations added. Select a city and click "Add" to include it.
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* LR Series Allocation (ADMIN FEATURE) */}
           <div className="form-section" style={{ borderLeftColor: '#dc2626' }}>
             <h2 className="section-title">🔐 LR Series Allocation (Admin Only)</h2>
@@ -605,10 +1105,32 @@ export default function BranchMasterForm() {
 
           {/* Submit Button */}
           <div style={{ textAlign: 'center', marginTop: '30px' }}>
-            <button type="submit" className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '14px 40px' }}>
-              <Save size={20} />
-              Add Branch (Continue Adding)
-            </button>
+            {editingBranchId ? (
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                <button type="submit" className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '14px 40px' }}>
+                  <Save size={20} />
+                  Update Branch
+                </button>
+                <button 
+                  type="button" 
+                  className="btn" 
+                  onClick={resetForm}
+                  style={{ 
+                    fontSize: '1.1rem', 
+                    padding: '14px 40px',
+                    background: '#64748b',
+                    color: 'white'
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button type="submit" className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '14px 40px' }}>
+                <Save size={20} />
+                Add Branch (Continue Adding)
+              </button>
+            )}
           </div>
         </form>
 
@@ -640,10 +1162,20 @@ export default function BranchMasterForm() {
                       Code: {branch.branchCode} | {branch.status}
                     </p>
                   </div>
-                  <button className="btn btn-danger" onClick={() => deleteBranch(branch.id)}>
-                    <Trash2 size={16} />
-                    Delete
-                  </button>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button 
+                      className="btn" 
+                      onClick={() => handleEdit(branch)}
+                      style={{ background: '#3b82f6', color: 'white' }}
+                    >
+                      <Edit2 size={16} />
+                      Edit
+                    </button>
+                    <button className="btn btn-danger" onClick={() => deleteBranch(branch.id)}>
+                      <Trash2 size={16} />
+                      Delete
+                    </button>
+                  </div>
                 </div>
                 
                 <div className="grid-3" style={{ fontSize: '0.9rem', marginBottom: '12px' }}>
@@ -661,8 +1193,80 @@ export default function BranchMasterForm() {
                   </div>
                 </div>
                 
+                {/* Nearby Cities */}
+                {(branch.nearbyCities && branch.nearbyCities.length > 0) && (
+                  <div style={{
+                    marginTop: '12px',
+                    padding: '12px',
+                    background: '#f8fafc',
+                    borderRadius: '8px',
+                    border: '2px solid #e2e8f0'
+                  }}>
+                    <strong style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: '#1e293b' }}>
+                      📍 Nearby Cities:
+                    </strong>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {branch.nearbyCities.map(cityId => {
+                        const city = cities.find(c => c.id.toString() === cityId.toString());
+                        if (!city) return null;
+                        return (
+                          <span
+                            key={cityId}
+                            style={{
+                              padding: '4px 10px',
+                              background: 'white',
+                              border: '1px solid #3b82f6',
+                              borderRadius: '12px',
+                              fontSize: '0.8rem',
+                              color: '#1e293b'
+                            }}
+                          >
+                            {city.cityName}, {city.state}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ODA Locations */}
+                {(branch.odaLocations && branch.odaLocations.length > 0) && (
+                  <div style={{
+                    marginTop: '12px',
+                    padding: '12px',
+                    background: '#fef3c7',
+                    borderRadius: '8px',
+                    border: '2px solid #fbbf24'
+                  }}>
+                    <strong style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: '#92400e' }}>
+                      🚚 ODA Locations:
+                    </strong>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {branch.odaLocations.map(cityId => {
+                        const city = cities.find(c => c.id.toString() === cityId.toString());
+                        if (!city) return null;
+                        return (
+                          <span
+                            key={cityId}
+                            style={{
+                              padding: '4px 10px',
+                              background: 'white',
+                              border: '1px solid #f59e0b',
+                              borderRadius: '12px',
+                              fontSize: '0.8rem',
+                              color: '#92400e'
+                            }}
+                          >
+                            {city.cityName}, {city.state}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {branch.lrSeriesStart && (
-                  <div className="lr-series-box">
+                  <div className="lr-series-box" style={{ marginTop: '12px' }}>
                     <strong>📋 LR Series:</strong> {branch.lrPrefix && `${branch.lrPrefix}-`}{branch.lrSeriesStart} to {branch.lrPrefix && `${branch.lrPrefix}-`}{branch.lrSeriesEnd}
                     <br/>
                     <small>

@@ -9,10 +9,16 @@ export default function ManifestForm() {
   const [cities, setCities] = useState([]);
   const [manifests, setManifests] = useState([]);
   const [trips, setTrips] = useState([]);
+  const [vendors, setVendors] = useState([]); // Market vehicle vendors for forwarding
   
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [selectedBranch, setSelectedBranch] = useState(null);
+  
+  // Current user and branch info
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [userBranch, setUserBranch] = useState(null);
   
   // Tab state: 'create' or 'search'
   const [activeTab, setActiveTab] = useState('create');
@@ -31,30 +37,129 @@ export default function ManifestForm() {
   const [selectedManifestForPrint, setSelectedManifestForPrint] = useState(null);
   const [editingManifestId, setEditingManifestId] = useState(null);
   
-  // Load data from localStorage
+  // Load data from server
   useEffect(() => {
-    const storedLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
-    const storedDrivers = JSON.parse(localStorage.getItem('drivers') || '[]');
-    const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    const storedManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const storedTrips = JSON.parse(localStorage.getItem('trips') || '[]');
+    const loadData = async () => {
+      try {
+        // Import syncService
+        const syncService = (await import('./utils/sync-service')).default;
+        
+        // Load from server
+        const [ftlResult, ptlResult, vehiclesResult, driversResult, branchesResult, citiesResult, manifestsResult, tripsResult, vendorsResult] = await Promise.all([
+          syncService.load('ftlLRBookings'),
+          syncService.load('ptlLRBookings'),
+          syncService.load('vehicles'),
+          syncService.load('drivers'),
+          syncService.load('branches'),
+          syncService.load('cities'),
+          syncService.load('manifests'),
+          syncService.load('trips'),
+          syncService.load('marketVehicleVendors')
+        ]);
+        
+        // Combine LR sources
+        const storedLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+        const allLRs = [...(ftlResult.data || []), ...(ptlResult.data || []), ...storedLRs];
+        const uniqueLRs = allLRs.filter((lr, index, self) => 
+          index === self.findIndex(t => t.id?.toString() === lr.id?.toString())
+        );
+        
+        setLrBookings(uniqueLRs);
+        setVehicles((vehiclesResult.data || []).filter(v => v.status === 'Active'));
+        setDrivers((driversResult.data || []).filter(d => d.status === 'Active'));
+        setBranches((branchesResult.data || []).filter(b => b.status === 'Active'));
+        setCities(citiesResult.data || []);
+        setManifests(manifestsResult.data || []);
+        setTrips(tripsResult.data || []);
+        setVendors((vendorsResult.data || []).filter(v => v.status === 'Active'));
+      } catch (error) {
+        console.error('Error loading data:', error);
+        // Fallback to localStorage
+        const ftlLRs = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
+        const ptlLRs = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+        const storedLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+        const allLRs = [...ftlLRs, ...ptlLRs, ...storedLRs];
+        const uniqueLRs = allLRs.filter((lr, index, self) => 
+          index === self.findIndex(t => t.id?.toString() === lr.id?.toString())
+        );
+        
+        const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
+        const storedDrivers = JSON.parse(localStorage.getItem('drivers') || '[]');
+        const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+        const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
+        const storedManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
+        const storedTrips = JSON.parse(localStorage.getItem('trips') || '[]');
+        const storedVendors = JSON.parse(localStorage.getItem('marketVehicleVendors') || '[]');
+        
+        setLrBookings(uniqueLRs);
+        setVehicles(storedVehicles.filter(v => v.status === 'Active'));
+        setDrivers(storedDrivers.filter(d => d.status === 'Active'));
+        setBranches(storedBranches.filter(b => b.status === 'Active'));
+        setCities(storedCities);
+        setManifests(storedManifests);
+        setTrips(storedTrips);
+        setVendors(storedVendors.filter(v => v.status === 'Active'));
+      }
+    };
     
-    setLrBookings(storedLRs);
-    setVehicles(storedVehicles.filter(v => v.status === 'Active'));
-    setDrivers(storedDrivers.filter(d => d.status === 'Active'));
-    setBranches(storedBranches.filter(b => b.status === 'Active'));
-    setCities(storedCities);
-    setManifests(storedManifests);
-    setTrips(storedTrips);
+    loadData();
+    
+    // Listen for sync events
+    const handleSync = () => {
+      loadData();
+    };
+    window.addEventListener('dataSyncedFromServer', handleSync);
+    
+    return () => {
+      window.removeEventListener('dataSyncedFromServer', handleSync);
+    };
+  }, []);
+  
+  // Get current user and branch info
+  useEffect(() => {
+    const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+    const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
+    if (user) {
+      setCurrentUser(user);
+      
+      // Check if admin
+      const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
+      const systemUser = systemUsers.find(u => u.username === user.username);
+      const userRole = systemUser?.userRole || user?.role || '';
+      const adminStatus = userRole === 'Admin' || userRole === 'admin';
+      setIsAdmin(adminStatus);
+      
+      // Get user's branch
+      if (adminStatus) {
+        // Admin: use selected branch from localStorage or null (all branches)
+        const adminBranchId = localStorage.getItem('adminSelectedBranch');
+        if (adminBranchId && adminBranchId !== 'all') {
+          const branch = storedBranches.find(b => b.id.toString() === adminBranchId);
+          setUserBranch(branch || null);
+        } else {
+          setUserBranch(null); // Admin can see all branches
+        }
+      } else {
+        // Non-admin: use their assigned branch
+        const userBranchId = systemUser?.branch || user?.branch;
+        if (userBranchId) {
+          const branch = storedBranches.find(b => b.id.toString() === userBranchId.toString());
+          setUserBranch(branch || null);
+        } else {
+          setUserBranch(null);
+        }
+      }
+    }
   }, []);
 
   const [formData, setFormData] = useState({
     manifestNumber: '',
     manifestDate: new Date().toISOString().split('T')[0],
     branch: '',
+    manifestType: 'branch', // 'branch' for branch-to-branch, 'vendor' for branch-to-vendor
     destinationBranch: '',
+    vendorId: '', // For branch-to-vendor forwarding
+    vendorName: '', // Store vendor name for display
     vehicleNumber: '',
     driverName: '',
     route: '',
@@ -82,6 +187,68 @@ export default function ManifestForm() {
     setFormData(prev => ({ ...prev, manifestNumber: manifestNo }));
   }, []);
 
+  // Check if returning from LR creation to continue editing manifest
+  useEffect(() => {
+    const returnToManifestEdit = localStorage.getItem('returnToManifestEdit');
+    if (returnToManifestEdit && manifests.length > 0) {
+      const manifestId = parseInt(returnToManifestEdit);
+      const manifest = manifests.find(m => m.id === manifestId);
+      if (manifest) {
+        // Reload LR bookings to get the newly created one
+        const allLRBookings = [
+          ...JSON.parse(localStorage.getItem('ftlLRBookings') || '[]'),
+          ...JSON.parse(localStorage.getItem('ptlLRBookings') || '[]')
+        ];
+        setLrBookings(allLRBookings);
+        
+        // Switch to create tab
+        setActiveTab('create');
+        
+        // Set editing manifest ID
+        setEditingManifestId(manifest.id);
+        
+        // Load manifest data into form
+        setFormData({
+          manifestNumber: manifest.manifestNumber,
+          manifestDate: manifest.manifestDate,
+          branch: manifest.branch,
+          manifestType: manifest.manifestType || 'branch',
+          destinationBranch: manifest.destinationBranch || '',
+          vendorId: manifest.vendorId || '',
+          vendorName: manifest.vendorName || '',
+          vehicleNumber: manifest.vehicleNumber,
+          driverName: manifest.driverName,
+          route: manifest.route,
+          selectedLRs: manifest.selectedLRs?.map(lr => {
+            if (typeof lr === 'object' && lr.id) return lr.id;
+            return lr;
+          }) || [],
+          departureDate: manifest.departureDate,
+          departureTime: manifest.departureTime,
+          loadingBy: manifest.loadingBy || '',
+          vehicleKms: manifest.vehicleKms || '',
+          remarks: manifest.remarks || ''
+        });
+
+        // Set selected vehicle and driver
+        const vehicle = vehicles.find(v => v.id.toString() === manifest.vehicleNumber.toString());
+        if (vehicle) setSelectedVehicle(vehicle);
+        const driver = drivers.find(d => d.id.toString() === manifest.driverName.toString());
+        if (driver) setSelectedDriver(driver);
+        const branch = branches.find(b => b.id.toString() === manifest.branch.toString());
+        if (branch) setSelectedBranch(branch);
+        
+        // Clear the return flag
+        localStorage.removeItem('returnToManifestEdit');
+        
+        // Scroll to top
+        setTimeout(() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }, 100);
+      }
+    }
+  }, [manifests, vehicles, drivers, branches]);
+
   // Calculate summary when LRs are selected
   useEffect(() => {
     try {
@@ -99,7 +266,7 @@ export default function ManifestForm() {
           acc.totalPaid += parseFloat(lr.totalAmount) || 0;
         } else if (lr.paymentMode === 'ToPay') {
           acc.totalToPay += parseFloat(lr.totalAmount) || 0;
-        } else if (lr.paymentMode === 'TBB') {
+        } else if (lr.paymentMode === 'TBB' || lr.paymentMode === 'SundryCreditor') {
           acc.totalTBB += parseFloat(lr.totalAmount) || 0;
         }
         
@@ -127,42 +294,134 @@ export default function ManifestForm() {
     }
   }, [formData.selectedLRs, lrBookings]);
 
+  // Reload LRs from all sources
+  const reloadLRBookings = () => {
+    const ftlLRs = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
+    const ptlLRs = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+    const storedLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+    // Combine all LR sources
+    const allLRs = [...ftlLRs, ...ptlLRs, ...storedLRs];
+    // Remove duplicates based on ID
+    const uniqueLRs = allLRs.filter((lr, index, self) => 
+      index === self.findIndex(t => t.id?.toString() === lr.id?.toString())
+    );
+    setLrBookings(uniqueLRs);
+    return uniqueLRs;
+  };
+
+  // Get destination branch for an LR based on destination city
+  const getLRDestinationBranch = (lr) => {
+    if (!lr || !lr.destination) return null;
+    
+    // Find destination city
+    const destinationCity = cities.find(c => 
+      c.code === lr.destination || 
+      c.cityName === lr.destination ||
+      c.id?.toString() === lr.destination?.toString()
+    );
+    
+    if (destinationCity) {
+      // Find branch in that city/state
+      const destBranch = branches.find(b => 
+        b.address && (
+          b.address.city === destinationCity.cityName || 
+          b.address.state === destinationCity.state ||
+          b.city === destinationCity.cityName ||
+          b.state === destinationCity.state
+        )
+      );
+      return destBranch;
+    }
+    
+    return null;
+  };
+
+  // Check if LR is accessible to current user's branch
+  const isLRAccessible = (lr) => {
+    // Admin can see all LRs
+    if (isAdmin) return true;
+    
+    // If no user branch, don't show any (safety)
+    if (!userBranch) return false;
+    
+    // Check if LR was booked in user's branch
+    const lrBranch = branches.find(b => 
+      b.id?.toString() === lr.branch?.toString() || 
+      b.branchCode === lr.branch
+    );
+    
+    if (lrBranch && (
+      lrBranch.id?.toString() === userBranch.id?.toString() ||
+      lrBranch.branchCode === userBranch.branchCode
+    )) {
+      return true; // LR booked in user's branch
+    }
+    
+    // Check if LR destination is in user's branch (for delivery/forwarding)
+    const destBranch = getLRDestinationBranch(lr);
+    if (destBranch && (
+      destBranch.id?.toString() === userBranch.id?.toString() ||
+      destBranch.branchCode === userBranch.branchCode
+    )) {
+      return true; // LR destination is user's branch (for delivery/forwarding)
+    }
+    
+    return false;
+  };
+
   // Get available LRs for selection (not in any manifest, or in the manifest being edited)
   const getAvailableLRs = () => {
-    if (!lrBookings.length) return [];
+    // Ensure we have the latest LRs
+    const currentLRs = lrBookings.length > 0 ? lrBookings : reloadLRBookings();
+    if (!currentLRs.length) return [];
     
-    // Get all LRs that are in manifests (excluding the one being edited)
-    const manifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const lrsInManifests = new Set();
+    // Get all LRs that are in other manifests (excluding the one being edited)
+    const lrsInOtherManifests = new Set();
     
     manifests.forEach(manifest => {
-      // Skip the manifest being edited
+      // Skip the manifest being edited - we want to show its LRs
       if (editingManifestId && manifest.id === editingManifestId) return;
       
-      // Collect LR IDs from this manifest
+      // Collect LR IDs from other manifests
       if (manifest.selectedLRs && Array.isArray(manifest.selectedLRs)) {
         manifest.selectedLRs.forEach(lr => {
           // Handle both object and ID formats
           const lrId = typeof lr === 'object' && lr.id ? lr.id : lr;
-          if (lrId) lrsInManifests.add(lrId.toString());
+          if (lrId) lrsInOtherManifests.add(lrId.toString());
         });
       }
     });
     
+    // Get LRs that are in the manifest being edited
+    const editingManifest = editingManifestId ? manifests.find(m => m.id === editingManifestId) : null;
+    const lrsInEditingManifest = new Set();
+    if (editingManifest && editingManifest.selectedLRs) {
+      editingManifest.selectedLRs.forEach(lr => {
+        const lrId = typeof lr === 'object' && lr.id ? lr.id : lr;
+        if (lrId) lrsInEditingManifest.add(lrId.toString());
+      });
+    }
+    
     // Return LRs that are either:
-    // 1. Not in any manifest, OR
-    // 2. In the manifest being edited (so they can be shown and removed)
-    return lrBookings.filter(lr => {
+    // 1. Not in any manifest (available to add), OR
+    // 2. In the manifest being edited (so they can be reselected/removed)
+    // AND accessible to current user's branch
+    return currentLRs.filter(lr => {
       if (!lr || !lr.id) return false;
       const lrIdStr = lr.id.toString();
       
-      // If editing, include LRs that are in the current manifest
-      if (editingManifestId && formData.selectedLRs.includes(lr.id)) {
-        return true;
+      // Check branch access first
+      if (!isLRAccessible(lr)) return false;
+      
+      // If editing, include:
+      // - LRs that are in the current manifest (for reselection/removal)
+      // - LRs that are not in any other manifest (for adding new LRs)
+      if (editingManifestId) {
+        return lrsInEditingManifest.has(lrIdStr) || !lrsInOtherManifests.has(lrIdStr);
       }
       
       // Otherwise, only include LRs not in any manifest
-      return !lrsInManifests.has(lrIdStr);
+      return !lrsInOtherManifests.has(lrIdStr);
     });
   };
 
@@ -235,9 +494,9 @@ export default function ManifestForm() {
     return numValue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   };
 
-  // Get LR Type display (TBB, Paid, ToPay)
+  // Get LR Type display (TBB, Paid, ToPay, SundryCreditor)
   const getLRType = (paymentMode) => {
-    if (paymentMode === 'TBB') return 'TBB';
+    if (paymentMode === 'TBB' || paymentMode === 'SundryCreditor') return 'TBB';
     if (paymentMode === 'Paid') return 'Paid';
     if (paymentMode === 'ToPay') return 'ToPay';
     return paymentMode || 'N/A';
@@ -256,11 +515,27 @@ export default function ManifestForm() {
 
   // Check if a trip exists for a manifest
   const hasTrip = (manifestId) => {
-    return trips.some(trip => 
-      trip.manifestId?.toString() === manifestId?.toString() || 
-      trip.manifestNumber === manifestId?.toString() ||
-      trip.selectedManifest?.toString() === manifestId?.toString()
-    );
+    if (!manifestId) return false;
+    const manifestIdStr = manifestId.toString();
+    
+    // Check if any trip has this manifest selected
+    return trips.some(trip => {
+      // Direct ID match
+      if (trip.selectedManifest?.toString() === manifestIdStr) {
+        return true;
+      }
+      
+      // Check by manifest ID if trip stores it differently
+      const manifest = manifests.find(m => m.id?.toString() === manifestIdStr);
+      if (manifest && trip.selectedManifest) {
+        const tripManifestId = trip.selectedManifest.toString();
+        if (tripManifestId === manifest.id?.toString()) {
+          return true;
+        }
+      }
+      
+      return false;
+    });
   };
 
   // Handle edit manifest
@@ -270,10 +545,19 @@ export default function ManifestForm() {
       return;
     }
     
+    // Reload LRs to ensure we have all available LRs (including those in the manifest)
+    reloadLRBookings();
+    
     // Set editing manifest ID
     setEditingManifestId(manifest.id);
     
     // Load manifest data into form
+    const selectedLRIds = manifest.selectedLRs?.map(lr => {
+      // Handle both object and ID formats
+      if (typeof lr === 'object' && lr.id) return lr.id;
+      return lr;
+    }) || [];
+    
     setFormData({
       manifestNumber: manifest.manifestNumber,
       manifestDate: manifest.manifestDate,
@@ -282,11 +566,7 @@ export default function ManifestForm() {
       vehicleNumber: manifest.vehicleNumber,
       driverName: manifest.driverName,
       route: manifest.route,
-      selectedLRs: manifest.selectedLRs?.map(lr => {
-        // Handle both object and ID formats
-        if (typeof lr === 'object' && lr.id) return lr.id;
-        return lr;
-      }) || [],
+      selectedLRs: selectedLRIds,
       departureDate: manifest.departureDate,
       departureTime: manifest.departureTime,
       loadingBy: manifest.loadingBy || '',
@@ -442,9 +722,9 @@ export default function ManifestForm() {
       formData.selectedLRs.includes(lr.id)
     );
 
-    // Determine destination branch from LR destinations
+    // Determine destination branch from LR destinations (only for branch-to-branch manifests)
     let destinationBranch = formData.destinationBranch;
-    if (!destinationBranch && selectedLRDetails.length > 0) {
+    if (formData.manifestType === 'branch' && !destinationBranch && selectedLRDetails.length > 0) {
       const firstLR = selectedLRDetails[0];
       if (firstLR.destination) {
         const destinationCity = cities.find(c => c.code === firstLR.destination || c.cityName === firstLR.destination);
@@ -459,6 +739,17 @@ export default function ManifestForm() {
         }
       }
     }
+    
+    // Validate manifest type requirements
+    if (formData.manifestType === 'branch' && !destinationBranch) {
+      alert('⚠️ Please select a destination branch for branch-to-branch manifest!');
+      return;
+    }
+    
+    if (formData.manifestType === 'vendor' && !formData.vendorId) {
+      alert('⚠️ Please select a vendor for branch-to-vendor forwarding!');
+      return;
+    }
 
     if (editingManifestId) {
       // Update existing manifest
@@ -469,7 +760,10 @@ export default function ManifestForm() {
           ...existingManifest,
           manifestDate: formData.manifestDate,
           branch: formData.branch,
-          destinationBranch: destinationBranch,
+          manifestType: formData.manifestType,
+          destinationBranch: formData.manifestType === 'branch' ? destinationBranch : '',
+          vendorId: formData.manifestType === 'vendor' ? formData.vendorId : '',
+          vendorName: formData.manifestType === 'vendor' ? formData.vendorName : '',
           vehicleNumber: formData.vehicleNumber,
           driverName: formData.driverName,
           route: formData.route,
@@ -493,7 +787,10 @@ export default function ManifestForm() {
           manifestNumber: manifestNo,
           manifestDate: new Date().toISOString().split('T')[0],
           branch: '',
+          manifestType: 'branch',
           destinationBranch: '',
+          vendorId: '',
+          vendorName: '',
           vehicleNumber: '',
           driverName: '',
           route: '',
@@ -522,7 +819,10 @@ export default function ManifestForm() {
         manifestNumber: formData.manifestNumber,
         manifestDate: formData.manifestDate,
         branch: formData.branch,
-        destinationBranch: destinationBranch,
+        manifestType: formData.manifestType,
+        destinationBranch: formData.manifestType === 'branch' ? destinationBranch : '',
+        vendorId: formData.manifestType === 'vendor' ? formData.vendorId : '',
+        vendorName: formData.manifestType === 'vendor' ? formData.vendorName : '',
         vehicleNumber: formData.vehicleNumber,
         driverName: formData.driverName,
         route: formData.route,
@@ -550,9 +850,37 @@ export default function ManifestForm() {
     }
   };
 
-  const selectedLRDetails = lrBookings.filter(lr => 
-    formData.selectedLRs.includes(lr.id)
-  );
+  // Get selected LR details - handle both ID references and full objects
+  const selectedLRDetails = formData.selectedLRs.map(selectedLRId => {
+    // First try to find in lrBookings by ID
+    let lr = lrBookings.find(lr => lr.id?.toString() === selectedLRId?.toString());
+    
+    // If not found, check if the manifest has the full LR object stored
+    if (!lr && editingManifestId) {
+      const editingManifest = manifests.find(m => m.id === editingManifestId);
+      if (editingManifest && editingManifest.selectedLRs) {
+        const storedLR = editingManifest.selectedLRs.find(lr => {
+          const lrId = typeof lr === 'object' && lr.id ? lr.id : lr;
+          return lrId?.toString() === selectedLRId?.toString();
+        });
+        if (storedLR && typeof storedLR === 'object' && storedLR.id) {
+          lr = storedLR;
+        }
+      }
+    }
+    
+    // If still not found, try to find in all LR sources
+    if (!lr) {
+      const allLRs = [
+        ...JSON.parse(localStorage.getItem('ftlLRBookings') || '[]'),
+        ...JSON.parse(localStorage.getItem('ptlLRBookings') || '[]'),
+        ...JSON.parse(localStorage.getItem('lrBookings') || '[]')
+      ];
+      lr = allLRs.find(l => l.id?.toString() === selectedLRId?.toString());
+    }
+    
+    return lr;
+  }).filter(lr => lr !== undefined && lr !== null);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-teal-50 to-slate-100 p-6">
@@ -891,12 +1219,17 @@ export default function ManifestForm() {
             <div className="grid-3">
               <div className="input-group">
                 <label>Manifest Number</label>
-                <input
-                  type="text"
+                <select
                   value={searchFilters.manifestNumber}
                   onChange={(e) => setSearchFilters(prev => ({ ...prev, manifestNumber: e.target.value }))}
-                  placeholder="Enter manifest number"
-                />
+                >
+                  <option value="">All Manifests</option>
+                  {manifests.map(manifest => (
+                    <option key={manifest.id} value={manifest.manifestNumber}>
+                      {manifest.manifestNumber} - {manifest.manifestDate}
+                    </option>
+                  ))}
+                </select>
               </div>
               
               <div className="input-group">
@@ -1048,7 +1381,7 @@ export default function ManifestForm() {
                         </span>
                       </td>
                       <td>
-                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                           <button
                             type="button"
                             onClick={() => handlePrint(manifest)}
@@ -1057,38 +1390,62 @@ export default function ManifestForm() {
                           >
                             <Printer size={16} /> Print
                           </button>
-                          {!hasTrip(manifest.id) && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => handleEdit(manifest)}
-                                className="btn"
-                                style={{ 
-                                  padding: '6px 12px', 
-                                  fontSize: '0.85rem',
-                                  background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                                  color: 'white'
-                                }}
-                                title="Edit Manifest"
-                              >
-                                <Edit2 size={16} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDelete(manifest)}
-                                className="btn"
-                                style={{ 
-                                  padding: '6px 12px', 
-                                  fontSize: '0.85rem',
-                                  background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-                                  color: 'white'
-                                }}
-                                title="Delete Manifest"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </>
-                          )}
+                          {(() => {
+                            const tripExists = hasTrip(manifest.id);
+                            return !tripExists ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleEdit(manifest)}
+                                  className="btn"
+                                  style={{ 
+                                    padding: '6px 12px', 
+                                    fontSize: '0.85rem',
+                                    background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                                    color: 'white',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer'
+                                  }}
+                                  title="Edit Manifest (Available until trip is created)"
+                                >
+                                  <Edit2 size={16} /> Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDelete(manifest)}
+                                  className="btn"
+                                  style={{ 
+                                    padding: '6px 12px', 
+                                    fontSize: '0.85rem',
+                                    background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                    color: 'white',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer'
+                                  }}
+                                  title="Delete Manifest"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </>
+                            ) : (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                color: '#64748b', 
+                                fontStyle: 'italic',
+                                padding: '4px 8px'
+                              }}>
+                                Trip Created
+                              </span>
+                            );
+                          })()}
                         </div>
                       </td>
                     </tr>
@@ -1186,8 +1543,24 @@ export default function ManifestForm() {
               </div>
               <div>
                 <div style={{ fontWeight: 600 }}>Route</div>
-                <div>{selectedManifestForPrint.route || 'N/A'}</div>
+                <div>
+                  {selectedManifestForPrint.manifestType === 'vendor' && selectedManifestForPrint.vendorName
+                    ? `To Vendor: ${selectedManifestForPrint.vendorName}`
+                    : selectedManifestForPrint.route || 'N/A'}
+                </div>
               </div>
+              {selectedManifestForPrint.manifestType === 'vendor' && (
+                <div>
+                  <div style={{ fontWeight: 600 }}>Forwarding Vendor</div>
+                  <div>{selectedManifestForPrint.vendorName || 'N/A'}</div>
+                </div>
+              )}
+              {selectedManifestForPrint.manifestType === 'branch' && selectedManifestForPrint.destinationBranch && (
+                <div>
+                  <div style={{ fontWeight: 600 }}>To Branch</div>
+                  <div>{getBranchName(selectedManifestForPrint.destinationBranch) || 'N/A'}</div>
+                </div>
+              )}
               <div>
                 <div style={{ fontWeight: 600 }}>Vehicle No</div>
                 <div>{getVehicleNumber(selectedManifestForPrint.vehicleNumber)}</div>
@@ -1266,61 +1639,199 @@ export default function ManifestForm() {
                     </tr>
                   );
                 })}
-                {selectedManifestForPrint.summary && (
-                  <tr style={{ border: '1px solid #000', fontWeight: 600, background: '#f0f0f0' }}>
-                    <td style={{ border: '1px solid #000', padding: '6px', textAlign: 'right' }} colSpan="7">
-                      {selectedManifestForPrint.selectedLRs?.length || 0}
-                    </td>
-                    <td style={{ border: '1px solid #000', padding: '6px', textAlign: 'right' }}>
-                      {selectedManifestForPrint.summary.totalPieces || 0}
-                    </td>
-                    <td style={{ border: '1px solid #000', padding: '6px', textAlign: 'right' }}>
-                      {formatNumber(selectedManifestForPrint.summary.totalWeight || 0)}
-                    </td>
-                    <td style={{ border: '1px solid #000', padding: '6px', textAlign: 'right' }}>
-                      {formatNumber(
-                        (selectedManifestForPrint.summary.totalPaid || 0) + 
-                        (selectedManifestForPrint.summary.totalToPay || 0) + 
-                        (selectedManifestForPrint.summary.totalTBB || 0)
-                      )}
-                    </td>
-                  </tr>
-                )}
+                {(() => {
+                  // Recalculate summary from actual LR data to ensure accuracy
+                  // Use the EXACT same LR objects as displayed in the table above
+                  const lrs = selectedManifestForPrint.selectedLRs || [];
+                  const recalculatedSummary = lrs.reduce((acc, lr) => {
+                    if (!lr) return acc;
+                    
+                    // Use the LR object directly (same as table display - no lookup needed)
+                    // The manifest stores full LR objects, so use them directly
+                    const lrData = lr; // Use directly, no lookup
+                    
+                    acc.totalPieces += parseInt(lrData.pieces) || 0;
+                    acc.totalWeight += parseFloat(lrData.weight) || 0;
+                    
+                    // Calculate total amount - use EXACT same logic as table display above
+                    // Match the table calculation exactly: lr.totalAmount || 0
+                    let totalAmount = lrData.totalAmount || 0;
+                    totalAmount = parseFloat(totalAmount) || 0;
+                    if (!totalAmount && lrData.charges) {
+                      const subtotal = (parseFloat(lrData.charges.freightRate) || 0) +
+                                     (parseFloat(lrData.charges.lrCharges) || 0) +
+                                     (parseFloat(lrData.charges.hamali) || 0) +
+                                     (parseFloat(lrData.charges.pickupCharges) || 0) +
+                                     (parseFloat(lrData.charges.deliveryCharges) || 0) +
+                                     (parseFloat(lrData.charges.odaCharges) || 0) +
+                                     (parseFloat(lrData.charges.other) || 0) +
+                                     (parseFloat(lrData.charges.waraiUnion) || 0);
+                      
+                      const gstPercent = lrData.charges.gstPercent || '5-rcm';
+                      let gstRate = 0;
+                      if (gstPercent === 'exempted') {
+                        gstRate = 0;
+                      } else if (gstPercent === '5-rcm') {
+                        gstRate = 5;
+                      } else {
+                        gstRate = parseFloat(gstPercent) || 0;
+                      }
+                      
+                      const gstAmount = (subtotal * gstRate) / 100;
+                      totalAmount = subtotal + gstAmount;
+                    }
+                    
+                    // Normalize payment mode (handle case variations and spaces)
+                    const paymentMode = (lrData.paymentMode || 'ToPay').toString().trim();
+                    const normalizedMode = paymentMode.toLowerCase().replace(/\s+/g, '');
+                    
+                    if (normalizedMode === 'paid') {
+                      acc.totalPaid += totalAmount;
+                    } else if (normalizedMode === 'topay') {
+                      acc.totalToPay += totalAmount;
+                    } else if (normalizedMode === 'tbb' || normalizedMode === 'sundrycreditor') {
+                      acc.totalTBB += totalAmount;
+                    } else {
+                      // Default to ToPay if unknown
+                      acc.totalToPay += totalAmount;
+                    }
+                    
+                    return acc;
+                  }, {
+                    totalPieces: 0,
+                    totalWeight: 0,
+                    totalPaid: 0,
+                    totalToPay: 0,
+                    totalTBB: 0
+                  });
+                  
+                  const grandTotal = recalculatedSummary.totalPaid + recalculatedSummary.totalToPay + recalculatedSummary.totalTBB;
+                  
+                  return (
+                    <tr style={{ border: '1px solid #000', fontWeight: 600, background: '#f0f0f0' }}>
+                      <td style={{ border: '1px solid #000', padding: '6px', textAlign: 'right' }} colSpan="7">
+                        {lrs.length}
+                      </td>
+                      <td style={{ border: '1px solid #000', padding: '6px', textAlign: 'right' }}>
+                        {recalculatedSummary.totalPieces}
+                      </td>
+                      <td style={{ border: '1px solid #000', padding: '6px', textAlign: 'right' }}>
+                        {formatNumber(recalculatedSummary.totalWeight)}
+                      </td>
+                      <td style={{ border: '1px solid #000', padding: '6px', textAlign: 'right' }}>
+                        {formatNumber(grandTotal)}
+                      </td>
+                    </tr>
+                  );
+                })()}
               </tbody>
             </table>
 
             {/* Footer Totals */}
-            {selectedManifestForPrint.summary && (
-              <div style={{ 
-                marginTop: '20px',
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr',
-                gap: '12px',
-                fontSize: '11px',
-                fontWeight: 600
-              }}>
-                <div>
-                  <div>NO OF PKGS:</div>
-                  <div style={{ fontSize: '12px', marginTop: '4px' }}>{selectedManifestForPrint.summary.totalPieces || 0}</div>
+            {(() => {
+              // Recalculate summary from actual LR data to ensure accuracy
+              // Use the EXACT same LR objects as displayed in the table above
+              const lrs = selectedManifestForPrint.selectedLRs || [];
+              const recalculatedSummary = lrs.reduce((acc, lr) => {
+                if (!lr) return acc;
+                
+                // Use the LR object directly (same as table display - no lookup needed)
+                // The manifest stores full LR objects, so use them directly
+                const lrData = lr; // Use directly, no lookup
+                
+                acc.totalPieces += parseInt(lrData.pieces) || 0;
+                acc.totalWeight += parseFloat(lrData.weight) || 0;
+                
+                // Calculate total amount - use EXACT same logic as table display above
+                // Match the table calculation exactly: lr.totalAmount || 0
+                let totalAmount = lrData.totalAmount || 0;
+                totalAmount = parseFloat(totalAmount) || 0;
+                if (!totalAmount && lrData.charges) {
+                  const subtotal = (parseFloat(lrData.charges.freightRate) || 0) +
+                                 (parseFloat(lrData.charges.lrCharges) || 0) +
+                                 (parseFloat(lrData.charges.hamali) || 0) +
+                                 (parseFloat(lrData.charges.pickupCharges) || 0) +
+                                 (parseFloat(lrData.charges.deliveryCharges) || 0) +
+                                 (parseFloat(lrData.charges.odaCharges) || 0) +
+                                 (parseFloat(lrData.charges.other) || 0) +
+                                 (parseFloat(lrData.charges.waraiUnion) || 0);
+                  
+                  const gstPercent = lrData.charges.gstPercent || '5-rcm';
+                  let gstRate = 0;
+                  if (gstPercent === 'exempted') {
+                    gstRate = 0;
+                  } else if (gstPercent === '5-rcm') {
+                    gstRate = 5;
+                  } else {
+                    gstRate = parseFloat(gstPercent) || 0;
+                  }
+                  
+                  const gstAmount = (subtotal * gstRate) / 100;
+                  totalAmount = subtotal + gstAmount;
+                }
+                
+                // Normalize payment mode (handle case variations and spaces)
+                const paymentMode = (lrData.paymentMode || 'ToPay').toString().trim();
+                const normalizedMode = paymentMode.toLowerCase().replace(/\s+/g, '');
+                
+                if (normalizedMode === 'paid') {
+                  acc.totalPaid += totalAmount;
+                } else if (normalizedMode === 'topay') {
+                  acc.totalToPay += totalAmount;
+                } else if (normalizedMode === 'tbb' || normalizedMode === 'sundrycreditor') {
+                  acc.totalTBB += totalAmount;
+                } else {
+                  // Default to ToPay if unknown
+                  acc.totalToPay += totalAmount;
+                }
+                
+                return acc;
+              }, {
+                totalPieces: 0,
+                totalWeight: 0,
+                totalPaid: 0,
+                totalToPay: 0,
+                totalTBB: 0
+              });
+              
+              const grandTotal = recalculatedSummary.totalPaid + recalculatedSummary.totalToPay + recalculatedSummary.totalTBB;
+              
+              return (
+                <div style={{ 
+                  marginTop: '20px',
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr',
+                  gap: '12px',
+                  fontSize: '11px',
+                  fontWeight: 600
+                }}>
+                  <div>
+                    <div>NO OF PKGS:</div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>{recalculatedSummary.totalPieces}</div>
+                  </div>
+                  <div>
+                    <div>ACTUAL WEIGHT</div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(recalculatedSummary.totalWeight)}</div>
+                  </div>
+                  <div>
+                    <div>TO PAY AMOUNT</div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(recalculatedSummary.totalToPay)}</div>
+                  </div>
+                  <div>
+                    <div>PAID AMOUNT</div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(recalculatedSummary.totalPaid)}</div>
+                  </div>
+                  <div>
+                    <div>TBB AMOUNT</div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(recalculatedSummary.totalTBB)}</div>
+                  </div>
+                  <div>
+                    <div>GRAND TOTAL</div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(grandTotal)}</div>
+                  </div>
                 </div>
-                <div>
-                  <div>ACTUAL WEIGHT</div>
-                  <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(selectedManifestForPrint.summary.totalWeight || 0)}</div>
-                </div>
-                <div>
-                  <div>TO PAY AMOUNT</div>
-                  <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(selectedManifestForPrint.summary.totalToPay || 0)}</div>
-                </div>
-                <div>
-                  <div>PAID AMOUNT</div>
-                  <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(selectedManifestForPrint.summary.totalPaid || 0)}</div>
-                </div>
-                <div>
-                  <div>TBB AMOUNT</div>
-                  <div style={{ fontSize: '12px', marginTop: '4px' }}>{formatNumber(selectedManifestForPrint.summary.totalTBB || 0)}</div>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Signatures */}
             <div style={{ marginTop: '48px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '32px' }}>
@@ -1370,7 +1881,10 @@ export default function ManifestForm() {
                     manifestNumber: '',
                     manifestDate: new Date().toISOString().split('T')[0],
                     branch: '',
+                    manifestType: 'branch',
                     destinationBranch: '',
+                    vendorId: '',
+                    vendorName: '',
                     vehicleNumber: '',
                     driverName: '',
                     route: '',
@@ -1474,22 +1988,81 @@ export default function ManifestForm() {
               </div>
               
               <div className="input-group">
-                <label>Destination Branch</label>
+                <label>Manifest Type *</label>
                 <select
-                  value={formData.destinationBranch}
-                  onChange={(e) => setFormData(prev => ({ ...prev, destinationBranch: e.target.value }))}
+                  value={formData.manifestType}
+                  onChange={(e) => {
+                    const type = e.target.value;
+                    setFormData(prev => ({ 
+                      ...prev, 
+                      manifestType: type,
+                      destinationBranch: type === 'branch' ? prev.destinationBranch : '',
+                      vendorId: type === 'vendor' ? prev.vendorId : '',
+                      vendorName: type === 'vendor' ? prev.vendorName : ''
+                    }));
+                  }}
+                  required
                 >
-                  <option value="">-- Auto-detect from LRs --</option>
-                  {branches.map(branch => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.branchName} - {branch.address.city}
-                    </option>
-                  ))}
+                  <option value="branch">Branch to Branch</option>
+                  <option value="vendor">Branch to Vendor (Forwarding)</option>
                 </select>
-                <small style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '4px', display: 'block' }}>
-                  Will be auto-detected from LR destinations if not selected
+                <small style={{ display: 'block', marginTop: '4px', fontSize: '0.75rem', color: '#64748b' }}>
+                  {formData.manifestType === 'branch' 
+                    ? 'Manifest will be sent to another branch' 
+                    : 'LRs will be forwarded to a vendor for delivery'}
                 </small>
               </div>
+            </div>
+
+            <div className="grid-2">
+              {formData.manifestType === 'branch' ? (
+                <div className="input-group">
+                  <label>Destination Branch *</label>
+                  <select
+                    value={formData.destinationBranch}
+                    onChange={(e) => setFormData(prev => ({ ...prev, destinationBranch: e.target.value }))}
+                    required
+                  >
+                    <option value="">-- Select Destination Branch --</option>
+                    {branches.map(branch => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.branchName} - {branch.address.city}
+                      </option>
+                    ))}
+                  </select>
+                  <small style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '4px', display: 'block' }}>
+                    Select the destination branch for this manifest
+                  </small>
+                </div>
+              ) : (
+                <div className="input-group">
+                  <label>Vendor (For Forwarding) *</label>
+                  <select
+                    value={formData.vendorId}
+                    onChange={(e) => {
+                      const vendorId = e.target.value;
+                      const vendor = vendors.find(v => v.id?.toString() === vendorId);
+                      setFormData(prev => ({ 
+                        ...prev, 
+                        vendorId: vendorId,
+                        vendorName: vendor ? (vendor.companyName || vendor.tradeName || vendor.vendorName || '') : ''
+                      }));
+                    }}
+                    required
+                  >
+                    <option value="">-- Select Vendor --</option>
+                    {vendors.map(vendor => (
+                      <option key={vendor.id} value={vendor.id}>
+                        {vendor.companyName || vendor.tradeName || vendor.vendorName || 'N/A'} 
+                        {vendor.primaryContact?.mobile ? ` - ${vendor.primaryContact.mobile}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <small style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '4px', display: 'block' }}>
+                    Select vendor to forward LRs for delivery
+                  </small>
+                </div>
+              )}
             </div>
             
             <div className="grid-2" style={{ marginTop: '16px' }}>
@@ -1627,7 +2200,72 @@ export default function ManifestForm() {
 
           {/* LR Selection */}
           <div className="form-section no-print">
-            <h2 className="section-title">Select LR Bookings for Manifest</h2>
+            <h2 className="section-title">
+              {editingManifestId ? 'Edit LR Bookings for Manifest' : 'Select LR Bookings for Manifest'}
+            </h2>
+            
+            {editingManifestId && (
+              <div style={{
+                padding: '12px 16px',
+                background: '#dbeafe',
+                borderRadius: '8px',
+                border: '2px solid #3b82f6',
+                marginBottom: '16px',
+                fontSize: '0.9rem',
+                color: '#1e40af',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '12px'
+              }}>
+                <div>
+                  <strong>✏️ Editing Mode:</strong> You can reselect existing LRs from this manifest and add new LRs that are not in any other manifest.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Store current manifest ID to return after creating LR
+                    if (editingManifestId) {
+                      localStorage.setItem('returnToManifestEdit', editingManifestId.toString());
+                    }
+                    // Use sessionStorage to navigate to LR booking form
+                    sessionStorage.setItem('navigateToView', 'lr-booking');
+                    // Dispatch custom event to trigger navigation
+                    window.dispatchEvent(new CustomEvent('navigateToView', { detail: 'lr-booking' }));
+                    // Also try direct navigation if parent is listening
+                    if (window.parent && window.parent !== window) {
+                      window.parent.postMessage({ type: 'navigate', view: 'lr-booking' }, '*');
+                    }
+                  }}
+                  style={{
+                    padding: '8px 16px',
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '0.9rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)'
+                  }}
+                  onMouseOver={(e) => {
+                    e.target.style.transform = 'translateY(-1px)';
+                    e.target.style.boxShadow = '0 4px 8px rgba(16, 185, 129, 0.4)';
+                  }}
+                  onMouseOut={(e) => {
+                    e.target.style.transform = 'translateY(0)';
+                    e.target.style.boxShadow = '0 2px 4px rgba(16, 185, 129, 0.3)';
+                  }}
+                >
+                  <span style={{ fontSize: '1.1rem' }}>+</span> Add New LR
+                </button>
+              </div>
+            )}
             
             {lrBookings.length === 0 ? (
               <div style={{
@@ -1650,6 +2288,17 @@ export default function ManifestForm() {
                 textAlign: 'center'
               }}>
                 ⚠️ No available LR bookings. All LRs are already manifested.
+              </div>
+            ) : getAvailableLRs().length === 0 && editingManifestId ? (
+              <div style={{
+                padding: '20px',
+                background: '#fef3c7',
+                borderRadius: '8px',
+                border: '2px solid #fbbf24',
+                color: '#92400e',
+                textAlign: 'center'
+              }}>
+                ⚠️ No LRs available to add. All LRs are in other manifests. You can only reselect LRs that are already in this manifest.
               </div>
             ) : (
               <div>
@@ -1698,13 +2347,30 @@ export default function ManifestForm() {
                   </div>
                 </div>
                 
-                {getAvailableLRs().map(lr => (
-                  <div
-                    key={lr.id}
-                    className={`lr-card ${formData.selectedLRs.includes(lr.id) ? 'selected' : ''}`}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => handleLRToggle(lr.id)}
-                  >
+                {(() => {
+                  const availableLRs = getAvailableLRs();
+                  const editingManifest = editingManifestId ? manifests.find(m => m.id === editingManifestId) : null;
+                  const lrsInEditingManifest = new Set();
+                  if (editingManifest && editingManifest.selectedLRs) {
+                    editingManifest.selectedLRs.forEach(lr => {
+                      const lrId = typeof lr === 'object' && lr.id ? lr.id : lr;
+                      if (lrId) lrsInEditingManifest.add(lrId.toString());
+                    });
+                  }
+                  
+                  return availableLRs.map(lr => {
+                    const isInManifest = editingManifestId && lrsInEditingManifest.has(lr.id.toString());
+                    return (
+                      <div
+                        key={lr.id}
+                        className={`lr-card ${formData.selectedLRs.includes(lr.id) ? 'selected' : ''}`}
+                        style={{ 
+                          cursor: 'pointer',
+                          border: isInManifest ? '2px solid #3b82f6' : '2px solid #e2e8f0',
+                          background: isInManifest && !formData.selectedLRs.includes(lr.id) ? '#eff6ff' : 'white'
+                        }}
+                        onClick={() => handleLRToggle(lr.id)}
+                      >
                     <div className="lr-card-header" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <input
                         type="checkbox"
@@ -1754,14 +2420,278 @@ export default function ManifestForm() {
                     </div>
                     
                     <div style={{ marginTop: '8px', fontSize: '0.85rem' }}>
-                      <div><strong>Consignor:</strong> {lr.consignor?.name || 'N/A'}</div>
-                      <div><strong>Consignee:</strong> {lr.consignee?.name || 'N/A'}</div>
+                      <div><strong>Consignor:</strong> {lr.consignor?.name || lr.consignorName || 'N/A'}</div>
+                      <div><strong>Consignee:</strong> {lr.consignee?.name || lr.consigneeName || 'N/A'}</div>
                     </div>
+                    
+                    {(lr.freightAmount || lr.totalAmount || lr.rate || lr.ratePerKg) && (
+                      <div style={{ 
+                        marginTop: '8px', 
+                        padding: '8px 12px', 
+                        background: '#f0fdf4', 
+                        borderRadius: '6px',
+                        border: '1px solid #86efac',
+                        fontSize: '0.85rem'
+                      }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                          {lr.freightAmount && (
+                            <div>
+                              <strong>Freight:</strong> ₹{parseFloat(lr.freightAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          )}
+                          {lr.totalAmount && (
+                            <div>
+                              <strong>Total Amount:</strong> ₹{parseFloat(lr.totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          )}
+                          {lr.rate && (
+                            <div>
+                              <strong>Rate:</strong> ₹{parseFloat(lr.rate).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          )}
+                          {lr.ratePerKg && (
+                            <div>
+                              <strong>Rate/Kg:</strong> ₹{parseFloat(lr.ratePerKg).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {(lr.remarks || lr.description || lr.specialInstructions) && (
+                      <div style={{ 
+                        marginTop: '8px', 
+                        padding: '8px 12px', 
+                        background: '#fef3c7', 
+                        borderRadius: '6px',
+                        border: '1px solid #fbbf24',
+                        fontSize: '0.85rem'
+                      }}>
+                        <strong>Remarks:</strong> {lr.remarks || lr.description || lr.specialInstructions || 'N/A'}
+                      </div>
+                    )}
+                    {editingManifestId && isInManifest && (
+                      <div style={{ 
+                        marginTop: '8px', 
+                        padding: '4px 8px', 
+                        background: '#3b82f6', 
+                        color: 'white', 
+                        borderRadius: '4px', 
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        display: 'inline-block'
+                      }}>
+                        ✓ Already in Manifest
+                      </div>
+                    )}
+                    {editingManifestId && !isInManifest && (
+                      <div style={{ 
+                        marginTop: '8px', 
+                        padding: '4px 8px', 
+                        background: '#10b981', 
+                        color: 'white', 
+                        borderRadius: '4px', 
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        display: 'inline-block'
+                      }}>
+                        + Add to Manifest
+                      </div>
+                    )}
                   </div>
-                ))}
+                    );
+                  });
+                })()}
               </div>
             )}
           </div>
+
+          {/* Selected LR Details Section */}
+          {formData.selectedLRs.length > 0 && (
+            <div className="form-section no-print" style={{ borderLeft: '4px solid #10b981' }}>
+              <h2 className="section-title" style={{ color: '#10b981' }}>
+                Selected LR Details ({formData.selectedLRs.length} LR{formData.selectedLRs.length !== 1 ? 's' : ''})
+              </h2>
+              
+              {selectedLRDetails.length === 0 && formData.selectedLRs.length > 0 ? (
+                <div style={{
+                  padding: '20px',
+                  background: '#fef3c7',
+                  borderRadius: '8px',
+                  border: '2px solid #fbbf24',
+                  color: '#92400e',
+                  textAlign: 'center'
+                }}>
+                  ⚠️ LR data is being loaded... Please wait or refresh the page.
+                </div>
+              ) : (
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', 
+                  gap: '16px',
+                  marginTop: '16px'
+                }}>
+                  {selectedLRDetails.map((lr) => (
+                  <div
+                    key={lr.id}
+                    style={{
+                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+                      border: '2px solid #10b981',
+                      borderRadius: '12px',
+                      padding: '16px',
+                      boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)'
+                    }}
+                  >
+                    <div style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center',
+                      marginBottom: '12px',
+                      paddingBottom: '12px',
+                      borderBottom: '2px solid #86efac'
+                    }}>
+                      <div>
+                        <strong className="mono" style={{ fontSize: '1.1rem', color: '#059669' }}>
+                          LR: {lr.lrNumber || 'N/A'}
+                        </strong>
+                        <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '4px' }}>
+                          {lr.bookingDate || 'N/A'}
+                        </div>
+                      </div>
+                      <span style={{
+                        padding: '6px 12px',
+                        background: '#10b981',
+                        color: 'white',
+                        borderRadius: '6px',
+                        fontSize: '0.85rem',
+                        fontWeight: 600
+                      }}>
+                        {lr.paymentMode || 'N/A'}
+                      </span>
+                    </div>
+                    
+                    <div style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: 'repeat(2, 1fr)', 
+                      gap: '12px',
+                      marginBottom: '12px',
+                      fontSize: '0.9rem'
+                    }}>
+                      <div>
+                        <strong style={{ color: '#64748b' }}>From:</strong>
+                        <div style={{ color: '#1e293b', fontWeight: 500, marginTop: '4px' }}>
+                          {getCityName(lr.origin || '')}
+                        </div>
+                      </div>
+                      <div>
+                        <strong style={{ color: '#64748b' }}>To:</strong>
+                        <div style={{ color: '#1e293b', fontWeight: 500, marginTop: '4px' }}>
+                          {getCityName(lr.destination || '')}
+                        </div>
+                      </div>
+                      <div>
+                        <strong style={{ color: '#64748b' }}>Pieces:</strong>
+                        <div style={{ color: '#1e293b', fontWeight: 500, marginTop: '4px' }}>
+                          {lr.pieces || '0'}
+                        </div>
+                      </div>
+                      <div>
+                        <strong style={{ color: '#64748b' }}>Weight:</strong>
+                        <div style={{ color: '#1e293b', fontWeight: 500, marginTop: '4px' }}>
+                          {lr.weight || '0'} Kg
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div style={{ 
+                      marginTop: '12px', 
+                      padding: '10px', 
+                      background: 'white', 
+                      borderRadius: '8px',
+                      fontSize: '0.85rem',
+                      border: '1px solid #d1fae5'
+                    }}>
+                      <div style={{ marginBottom: '6px' }}>
+                        <strong style={{ color: '#64748b' }}>Consignor:</strong>
+                        <div style={{ color: '#1e293b', marginTop: '2px' }}>
+                          {lr.consignor?.name || lr.consignorName || 'N/A'}
+                        </div>
+                      </div>
+                      <div>
+                        <strong style={{ color: '#64748b' }}>Consignee:</strong>
+                        <div style={{ color: '#1e293b', marginTop: '2px' }}>
+                          {lr.consignee?.name || lr.consigneeName || 'N/A'}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {(lr.freightAmount || lr.totalAmount || lr.rate || lr.ratePerKg) && (
+                      <div style={{ 
+                        marginTop: '12px', 
+                        padding: '10px', 
+                        background: '#ecfdf5', 
+                        borderRadius: '8px',
+                        border: '1px solid #86efac',
+                        fontSize: '0.85rem'
+                      }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                          {lr.freightAmount && (
+                            <div>
+                              <strong style={{ color: '#64748b' }}>Freight:</strong>
+                              <div style={{ color: '#059669', fontWeight: 600, marginTop: '2px' }}>
+                                ₹{parseFloat(lr.freightAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          )}
+                          {lr.totalAmount && (
+                            <div>
+                              <strong style={{ color: '#64748b' }}>Total:</strong>
+                              <div style={{ color: '#059669', fontWeight: 600, marginTop: '2px' }}>
+                                ₹{parseFloat(lr.totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          )}
+                          {lr.rate && (
+                            <div>
+                              <strong style={{ color: '#64748b' }}>Rate:</strong>
+                              <div style={{ color: '#059669', fontWeight: 600, marginTop: '2px' }}>
+                                ₹{parseFloat(lr.rate).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          )}
+                          {lr.ratePerKg && (
+                            <div>
+                              <strong style={{ color: '#64748b' }}>Rate/Kg:</strong>
+                              <div style={{ color: '#059669', fontWeight: 600, marginTop: '2px' }}>
+                                ₹{parseFloat(lr.ratePerKg).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {(lr.remarks || lr.description || lr.specialInstructions) && (
+                      <div style={{ 
+                        marginTop: '12px', 
+                        padding: '10px', 
+                        background: '#fef3c7', 
+                        borderRadius: '8px',
+                        border: '1px solid #fbbf24',
+                        fontSize: '0.85rem'
+                      }}>
+                        <strong style={{ color: '#92400e' }}>Remarks:</strong>
+                        <div style={{ color: '#78350f', marginTop: '4px' }}>
+                          {lr.remarks || lr.description || lr.specialInstructions || 'N/A'}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Summary */}
           {manifestSummary.lrCount > 0 && (
@@ -1836,49 +2766,60 @@ export default function ManifestForm() {
               <table className="manifest-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '8%' }}>S.No</th>
-                    <th style={{ width: '12%' }}>LR No.</th>
-                    <th style={{ width: '18%' }}>Consignor</th>
-                    <th style={{ width: '18%' }}>Consignee</th>
-                    <th style={{ width: '8%' }}>Pieces</th>
-                    <th style={{ width: '10%' }}>Weight (Kg)</th>
-                    <th style={{ width: '10%' }}>From</th>
-                    <th style={{ width: '10%' }}>To</th>
+                    <th style={{ width: '6%' }}>S.No</th>
+                    <th style={{ width: '10%' }}>LR No.</th>
+                    <th style={{ width: '15%' }}>Consignor</th>
+                    <th style={{ width: '15%' }}>Consignee</th>
+                    <th style={{ width: '6%' }}>Pieces</th>
+                    <th style={{ width: '8%' }}>Weight (Kg)</th>
+                    <th style={{ width: '8%' }}>From</th>
+                    <th style={{ width: '8%' }}>To</th>
                     <th style={{ width: '6%' }}>Mode</th>
+                    <th style={{ width: '10%' }}>Amount (₹)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {selectedLRDetails.map((lr, index) => (
-                    <tr key={lr.id}>
-                      <td>{index + 1}</td>
-                      <td className="mono">{lr.lrNumber}</td>
-                      <td>{lr.consignor.name}</td>
-                      <td>{lr.consignee.name}</td>
-                      <td style={{ textAlign: 'center' }}>{lr.pieces}</td>
-                      <td style={{ textAlign: 'right' }}>{lr.weight}</td>
-                      <td>{getCityName(lr.origin)}</td>
-                      <td>{getCityName(lr.destination)}</td>
-                      <td style={{ fontSize: '0.75rem', fontWeight: 600 }}>{lr.paymentMode}</td>
-                    </tr>
-                  ))}
+                  {selectedLRDetails.map((lr, index) => {
+                    const lrAmount = parseFloat(lr.totalAmount) || 0;
+                    return (
+                      <tr key={lr.id}>
+                        <td>{index + 1}</td>
+                        <td className="mono">{lr.lrNumber}</td>
+                        <td>{lr.consignor?.name || lr.consignorName || 'N/A'}</td>
+                        <td>{lr.consignee?.name || lr.consigneeName || 'N/A'}</td>
+                        <td style={{ textAlign: 'center' }}>{lr.pieces || '0'}</td>
+                        <td style={{ textAlign: 'right' }}>{lr.weight || '0'}</td>
+                        <td>{getCityName(lr.origin)}</td>
+                        <td>{getCityName(lr.destination)}</td>
+                        <td style={{ fontSize: '0.75rem', fontWeight: 600 }}>{lr.paymentMode || 'N/A'}</td>
+                        <td style={{ textAlign: 'right' }}>{lrAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    );
+                  })}
                   <tr style={{ fontWeight: 600, background: '#f1f5f9' }}>
                     <td colSpan="4" style={{ textAlign: 'right' }}>TOTAL:</td>
                     <td style={{ textAlign: 'center' }}>{manifestSummary.totalPieces}</td>
                     <td style={{ textAlign: 'right' }}>{manifestSummary.totalWeight.toFixed(2)}</td>
                     <td colSpan="3"></td>
+                    <td style={{ textAlign: 'right' }}>
+                      {(manifestSummary.totalPaid + manifestSummary.totalToPay + manifestSummary.totalTBB).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
                   </tr>
                 </tbody>
               </table>
 
-              <div style={{ marginTop: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+              <div style={{ marginTop: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px' }}>
                 <div>
-                  <strong>Paid:</strong> ₹{manifestSummary.totalPaid.toFixed(2)}
+                  <strong>Paid:</strong> ₹{manifestSummary.totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div>
-                  <strong>To Pay:</strong> ₹{manifestSummary.totalToPay.toFixed(2)}
+                  <strong>To Pay:</strong> ₹{manifestSummary.totalToPay.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div>
-                  <strong>TBB:</strong> ₹{manifestSummary.totalTBB.toFixed(2)}
+                  <strong>TBB:</strong> ₹{manifestSummary.totalTBB.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div>
+                  <strong>Grand Total:</strong> ₹{(manifestSummary.totalPaid + manifestSummary.totalToPay + manifestSummary.totalTBB).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
 

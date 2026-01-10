@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import syncService from '../utils/sync-service';
 
 const InvoiceCreation = () => {
   const [bookings, setBookings] = useState([]);
@@ -14,10 +15,18 @@ const InvoiceCreation = () => {
     loadBookings();
   }, []);
 
-  const loadBookings = () => {
-    const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-    const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-    setBookings([...ftlBookings, ...ptlBookings]);
+  const loadBookings = async () => {
+    try {
+      const ftlResult = await syncService.load('ftlLRBookings');
+      const ptlResult = await syncService.load('ptlLRBookings');
+      setBookings([...ftlResult.data, ...ptlResult.data]);
+    } catch (error) {
+      console.error('Error loading bookings:', error);
+      // Fallback to localStorage
+      const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
+      const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+      setBookings([...ftlBookings, ...ptlBookings]);
+    }
   };
 
   const handleSelectBooking = (bookingId) => {
@@ -30,7 +39,7 @@ const InvoiceCreation = () => {
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (selectedBookings.length === 0) {
       alert('Please select at least one LR booking');
@@ -48,20 +57,29 @@ const InvoiceCreation = () => {
       createdAt: new Date().toISOString()
     };
 
-    const invoices = JSON.parse(localStorage.getItem('invoices') || '[]');
-    invoices.push(invoice);
-    localStorage.setItem('invoices', JSON.stringify(invoices));
+    try {
+      // Save to API server and localStorage
+      const result = await syncService.save('invoices', invoice);
+      
+      if (result.synced) {
+        alert('Invoice created successfully and synced across all systems!');
+      } else {
+        alert('Invoice created successfully! (Saved locally - server may be unavailable)');
+      }
 
-    window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'invoice', data: invoice } }));
-    alert('Invoice created successfully!');
-    
-    setSelectedBookings([]);
-    setInvoiceData({
-      invoiceNumber: '',
-      date: new Date().toISOString().split('T')[0],
-      customerName: '',
-      amount: '',
-    });
+      window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'invoice', data: invoice } }));
+      
+      setSelectedBookings([]);
+      setInvoiceData({
+        invoiceNumber: '',
+        date: new Date().toISOString().split('T')[0],
+        customerName: '',
+        amount: '',
+      });
+    } catch (error) {
+      console.error('Error saving invoice:', error);
+      alert('Error saving invoice. Please try again.');
+    }
   };
 
   return (
