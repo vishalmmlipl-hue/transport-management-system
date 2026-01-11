@@ -1,46 +1,55 @@
-# ✅ Fix Build Error - Syntax Error Fixed
+# ✅ Fixed: Build Error - Duplicate loadCities
 
-## ❌ Error Found
+## 🔍 Problem
 
-**File:** `src/services/dataService.js`  
-**Issue:** Orphaned properties (lines 81-87) outside of any object  
-**Error:** `Missing semicolon` at line 82
+Build was failing with:
+```
+SyntaxError: Identifier 'loadCities' has already been declared.
+```
 
----
+**Cause:** 
+- Line 8: `loadData: loadCities` from `useCities()` hook
+- Line 63: Old `loadCities` function using `syncService`
+- Both declared the same name
 
 ## ✅ Fix Applied
 
-**Removed orphaned properties:**
-- Lines 81-87 had properties outside any object
-- These were duplicates (already in `tableNames` object)
-- Removed them to fix syntax error
+**Updated `src/city-master-form.jsx`:**
 
----
+1. ✅ Removed duplicate `loadCities` function
+2. ✅ Using `loadCities` from `useCities()` hook
+3. ✅ Replaced `syncService.save` with `createCity`/`updateCity` hooks
+4. ✅ Replaced `syncService.load` with hook's `loadCities`
+5. ✅ Replaced localStorage with `cities` from hook
+6. ✅ Updated delete to use `removeCity` from hook
 
-## 🚀 Deploy the Fix
+## 📋 Changes Made
 
-### Run These Commands:
-
-```bash
-cd /Users/macbook/transport-management-system
-git add src/services/dataService.js
-git commit -m "Fix syntax error in dataService.js - remove orphaned properties"
-git push origin main
+### Before:
+```javascript
+const loadCities = async () => {
+  const result = await syncService.load('cities');
+  setCities(result.data);
+};
 ```
 
+### After:
+```javascript
+const { loadData: loadCities } = useCities();
+// loadCities is now from the hook
+```
+
+## 🚀 Next Steps
+
+1. **Commit and push:**
+   ```bash
+   git add .
+   git commit -m "Fix city-master-form: remove duplicate loadCities, use hooks"
+   git push
+   ```
+
+2. **Netlify will auto-deploy** - Build should succeed now
+
 ---
 
-## ✅ After Deployment
-
-Netlify will:
-1. Detect the push
-2. Rebuild your site
-3. Deploy successfully ✅
-
-**Then test:**
-- All forms should save to server ✅
-- Build should succeed ✅
-
----
-
-**Run the commands above to deploy the fix!** 🚀
+**Build error fixed!** ✅

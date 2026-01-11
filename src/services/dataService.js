@@ -18,8 +18,8 @@ export const accountsService = {
 // Data Service Layer
 // This service abstracts data storage - works only with backend API (cloud sync)
 
-// Render.com API base URL
-const API_BASE_URL = 'https://transport-management-system-wzhx.onrender.com';
+// Render.com API base URL - includes /api
+const API_BASE_URL = 'https://transport-management-system-wzhx.onrender.com/api';
 
 // Helper for HTTP requests
 async function apiRequest(path, options = {}) {
@@ -41,17 +41,17 @@ async function apiRequest(path, options = {}) {
 export const dataService = {
   // Get all records from a table
   async getAll(tableName) {
-    return apiRequest(`/api/${tableName}`);
+    return apiRequest(`/${tableName}`);
   },
 
   // Get a single record by ID
   async getById(tableName, id) {
-    return apiRequest(`/api/${tableName}/${id}`);
+    return apiRequest(`/${tableName}/${id}`);
   },
 
   // Create a new record
   async create(tableName, record) {
-    return apiRequest(`/api/${tableName}`, {
+    return apiRequest(`/${tableName}`, {
       method: 'POST',
       body: JSON.stringify(record),
     });
@@ -59,7 +59,7 @@ export const dataService = {
 
   // Update a record by ID
   async update(tableName, id, updates) {
-    return apiRequest(`/api/${tableName}/${id}`, {
+    return apiRequest(`/${tableName}/${id}`, {
       method: 'PUT',
       body: JSON.stringify(updates),
     });
@@ -67,7 +67,7 @@ export const dataService = {
 
   // Delete a record by ID
   async delete(tableName, id) {
-    return apiRequest(`/api/${tableName}/${id}`, {
+    return apiRequest(`/${tableName}/${id}`, {
       method: 'DELETE',
     });
   },
@@ -75,7 +75,7 @@ export const dataService = {
   // Query records with filters (if supported by your API)
   async query(tableName, filters) {
     const params = filters ? '?' + new URLSearchParams(filters).toString() : '';
-    return apiRequest(`/api/${tableName}${params}`);
+    return apiRequest(`/${tableName}${params}`);
   },
 };
 

@@ -21,4 +21,4 @@ export const supabase = {
 };
 
 // No warning - silently disabled
-console.log('ℹ️ Supabase disabled - app uses Render.com API');
+// Don't log anything - this is expected behavior

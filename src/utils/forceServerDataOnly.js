@@ -58,10 +58,22 @@ export const forceServerDataOnly = () => {
 };
 
 // Auto-run on import
+// But wait for auto-sync to complete first
 if (typeof window !== 'undefined') {
   // Only run once per session
   if (!sessionStorage.getItem('serverDataOnly')) {
-    forceServerDataOnly();
+    // Wait for auto-sync to complete (runs after 1 second)
+    // Then clear localStorage (runs after 3 seconds)
+    setTimeout(() => {
+      if (sessionStorage.getItem('autoSyncCompleted')) {
+        forceServerDataOnly();
+      } else {
+        // If auto-sync hasn't completed, wait a bit more
+        setTimeout(() => {
+          forceServerDataOnly();
+        }, 2000);
+      }
+    }, 3000);
   }
 }
 

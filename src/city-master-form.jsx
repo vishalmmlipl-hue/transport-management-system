@@ -38,7 +38,9 @@ export default function CityMasterForm() {
   }, [cities]);
 
   useEffect(() => {
-    filterCities();
+    if (cities) {
+      filterCities();
+    }
   }, [searchTerm, filterState, cities]);
 
   useEffect(() => {
@@ -60,21 +62,16 @@ export default function CityMasterForm() {
     };
   }, []);
 
-  const loadCities = async () => {
-    try {
-      const result = await syncService.load('cities');
-      setCities(result.data);
-      setFilteredCities(result.data);
-    } catch (error) {
-      console.error('Error loading cities:', error);
-      // Fallback to localStorage
-      const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
-      setCities(allCities);
-      setFilteredCities(allCities);
-    }
-  };
+  // Update filteredCities when cities change
+  useEffect(() => {
+    filterCities();
+  }, [cities]);
 
   const filterCities = () => {
+    if (!cities || cities.length === 0) {
+      setFilteredCities([]);
+      return;
+    }
     let filtered = [...cities];
     
     if (searchTerm) {
@@ -185,7 +182,7 @@ export default function CityMasterForm() {
     }
 
     const lines = bulkImportText.split('\n').filter(line => line.trim());
-    const existingCities = JSON.parse(localStorage.getItem('cities') || '[]');
+    const existingCities = cities || [];
     const newCities = [];
     const errors = [];
     let successCount = 0;
@@ -243,9 +240,16 @@ export default function CityMasterForm() {
     });
 
     if (newCities.length > 0) {
-      const updatedCities = [...existingCities, ...newCities];
-      localStorage.setItem('cities', JSON.stringify(updatedCities));
-      loadCities();
+      // Save each new city to Render.com
+      for (const city of newCities) {
+        try {
+          await createCity(city);
+        } catch (error) {
+          console.error('Error creating city:', error);
+          errors.push(`Failed to save ${city.cityName}: ${error.message}`);
+        }
+      }
+      await loadCities();
       
       let message = `✅ Successfully imported ${successCount} cities!\n\n`;
       if (errors.length > 0) {
@@ -293,7 +297,7 @@ export default function CityMasterForm() {
     
     try {
       // Load current cities to check for duplicates
-      const existingCities = cities;
+      const existingCities = cities || [];
       
       // Check for duplicate (same city name + same state)
       const isDuplicate = existingCities.some(city => 
@@ -342,23 +346,16 @@ export default function CityMasterForm() {
         updatedAt: new Date().toISOString()
       };
 
-      const result = await syncService.save('cities', newCity, !!formData.editingCityId, formData.editingCityId);
-      
-      if (result.synced) {
-        if (formData.editingCityId) {
-          alert(`✅ City "${formData.cityName}" updated successfully and synced across all systems!`);
-        } else {
-          alert(`✅ City "${formData.cityName}" created successfully and synced across all systems!\n\nCity Code: ${newCity.code}\n\nThis city is now available for selection in LR booking forms.`);
-        }
+      // Use hook methods to save to Render.com
+      if (formData.editingCityId) {
+        await updateCity(formData.editingCityId, newCity);
+        alert(`✅ City "${formData.cityName}" updated successfully on Render.com server!`);
       } else {
-        if (formData.editingCityId) {
-          alert(`✅ City "${formData.cityName}" updated successfully! (Saved locally - server may be unavailable)`);
-        } else {
-          alert(`✅ City "${formData.cityName}" created successfully! (Saved locally - server may be unavailable)\n\nCity Code: ${newCity.code}`);
-        }
+        await createCity(newCity);
+        alert(`✅ City "${formData.cityName}" created successfully on Render.com server!\n\nCity Code: ${newCity.code}\n\nThis city is now available for selection in LR booking forms.`);
       }
       
-      await loadCities(); // Reload cities list
+      await loadCities(); // Reload cities list from server
       
       // Reset form
       setFormData({
@@ -847,13 +844,11 @@ export default function CityMasterForm() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
                               if (window.confirm(`Are you sure you want to delete "${city.cityName}, ${city.state}"?`)) {
-                                const existingCities = JSON.parse(localStorage.getItem('cities') || '[]');
-                                const updated = existingCities.filter(c => c.id !== city.id);
-                                localStorage.setItem('cities', JSON.stringify(updated));
-                                loadCities();
-                                alert(`✅ City "${city.cityName}" deleted successfully!`);
+                                await removeCity(city.id);
+                                await loadCities();
+                                alert(`✅ City "${city.cityName}" deleted successfully from Render.com server!`);
                               }
                             }}
                             style={{

@@ -98,7 +98,7 @@ export default function TransportManagementApp() {
         if (userData.role === 'Admin' || userData.role === 'admin') {
           const savedBranchId = localStorage.getItem('adminSelectedBranch');
           if (savedBranchId && loadedBranches.length > 0) {
-            const branch = loadedBranches.find(b => b.id.toString() === savedBranchId);
+            const branch = loadedBranches.find(b => b.id && b.id.toString() === savedBranchId);
             if (branch) {
               setSelectedBranch(branch);
               // Update currentUser branch for context
@@ -106,7 +106,7 @@ export default function TransportManagementApp() {
               setCurrentUser(updatedUser);
               localStorage.setItem('currentUser', JSON.stringify(updatedUser));
             }
-          } else if (loadedBranches.length > 0) {
+          } else if (loadedBranches.length > 0 && loadedBranches[0].id) {
             setSelectedBranch(loadedBranches[0]);
             const updatedUser = { ...userData, branch: loadedBranches[0].id };
             setCurrentUser(updatedUser);
@@ -116,7 +116,7 @@ export default function TransportManagementApp() {
         } else {
           // For non-admin: use their assigned branch
           if (userData.branch && loadedBranches.length > 0) {
-            const branch = loadedBranches.find(b => b.id.toString() === userData.branch.toString());
+            const branch = loadedBranches.find(b => b.id && b.id.toString() === String(userData.branch));
             if (branch) {
               setSelectedBranch(branch);
             }
@@ -332,13 +332,15 @@ export default function TransportManagementApp() {
       localStorage.setItem('currentUser', JSON.stringify(updatedUser));
       localStorage.removeItem('adminSelectedBranch');
     } else {
-      const branch = branches.find(b => b.id.toString() === branchId.toString());
+      const branch = branches.find(b => b.id && b.id.toString() === String(branchId));
       if (branch) {
         setSelectedBranch(branch);
         const updatedUser = { ...currentUser, branch: branch.id };
         setCurrentUser(updatedUser);
         localStorage.setItem('currentUser', JSON.stringify(updatedUser));
-        localStorage.setItem('adminSelectedBranch', branch.id.toString());
+            if (branch.id) {
+              localStorage.setItem('adminSelectedBranch', branch.id.toString());
+            }
       }
     }
   };
@@ -889,9 +891,12 @@ export default function TransportManagementApp() {
                 <div style={{ fontSize: '0.85rem', opacity: 0.9, marginBottom: '4px' }}>Branch</div>
                 <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>
                   {(() => {
-                    const branches = JSON.parse(localStorage.getItem('branches') || '[]');
-                    const branch = branches.find(b => b.id?.toString() === currentUser.branch?.toString());
-                    return branch ? `${branch.branchName} - ${branch.address?.city || ''}` : 'N/A';
+                    // Use branches from state (loaded from server), not localStorage
+                    if (currentUser.branch && branches.length > 0) {
+                      const branch = branches.find(b => b.id && b.id.toString() === String(currentUser.branch));
+                      return branch ? `${branch.branchName} - ${branch.address?.city || branch.city || ''}` : 'N/A';
+                    }
+                    return 'N/A';
                   })()}
                 </div>
               </div>
@@ -1432,7 +1437,7 @@ export default function TransportManagementApp() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Building2 size={18} style={{ color: 'rgba(255,255,255,0.7)' }} />
                 <select
-                  value={selectedBranch ? selectedBranch.id.toString() : 'all'}
+                  value={selectedBranch && selectedBranch.id ? selectedBranch.id.toString() : 'all'}
                   onChange={(e) => handleBranchChange(e.target.value)}
                   style={{
                     padding: '8px 12px',
