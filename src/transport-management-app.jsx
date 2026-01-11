@@ -338,7 +338,7 @@ export default function TransportManagementApp() {
         const updatedUser = { ...currentUser, branch: branch.id };
         setCurrentUser(updatedUser);
         localStorage.setItem('currentUser', JSON.stringify(updatedUser));
-            if (branch.id) {
+            if (branch && branch.id) {
               localStorage.setItem('adminSelectedBranch', branch.id.toString());
             }
       }

@@ -6,8 +6,7 @@ import { isSupabaseConfigured } from '../supabaseClient';
 
 export const migrateToDatabase = async () => {
   // Supabase is disabled - app uses Render.com API
-  console.log('ℹ️ Supabase migration disabled - app uses Render.com API');
-  console.log('💡 Use MIGRATE_AND_SYNC_DATA.js to migrate data to Render.com');
+  // Silently return - no console logs
   return { 
     success: false, 
     message: 'Supabase disabled - use Render.com API migration script instead' 
