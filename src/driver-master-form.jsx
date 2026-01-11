@@ -376,7 +376,7 @@ export default function DriverMasterWithGovVerification() {
     reader.readAsDataURL(file);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!licenseVerified) {

@@ -180,9 +180,33 @@ app.post('/api/bulk/:tableName', async (req, res) => {
 });
 
 // Health check
+// Root API endpoint
+app.get('/api', (req, res) => {
+  res.json({
+    success: true,
+    message: 'TMS Backend API is running',
+    database: dbPath,
+    timestamp: new Date().toISOString(),
+    endpoints: [
+      '/api/health',
+      '/api/branches',
+      '/api/cities',
+      '/api/clients',
+      '/api/vehicles',
+      '/api/drivers',
+      '/api/staff',
+      '/api/lrBookings',
+      '/api/manifests',
+      '/api/trips',
+      '/api/invoices',
+      '/api/pods'
+    ]
+  });
+});
+
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: 'TMS Backend API is running',
     database: dbPath,
     timestamp: new Date().toISOString()

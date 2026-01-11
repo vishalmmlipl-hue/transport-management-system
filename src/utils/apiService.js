@@ -1,29 +1,33 @@
 /**
- * Centralized API Service for Render.com
+ * Centralized API Service
  * Replaces localStorage with server-side storage
  * All data operations go through this service
  */
 
-// Render.com API Configuration
+// API URLs for different environments
+const HOSTINGER_API_URL = 'https://mmlipl.in/api';
 const RENDER_API_URL = 'https://transport-management-system-wzhx.onrender.com/api';
 
 /**
  * Get API Base URL
- * Always use Render.com for production (mmlipl.info)
- * Use environment variable if set, otherwise Render.com
+ * - mmlipl.in → Use Hostinger API (https://mmlipl.in/api)
+ * - mmlipl.info → Use Render.com API
+ * - Development → Use environment variable or Render.com
  */
 export const getAPIBaseURL = () => {
-  // Always use Render.com for production
-  // This ensures all browsers use the same server
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     
-    // Production domains: Always use Render.com
+    // mmlipl.in → Use Hostinger API
+    if (hostname === 'mmlipl.in' || hostname === 'www.mmlipl.in') {
+      return HOSTINGER_API_URL;
+    }
+    
+    // mmlipl.info → Use Render.com API
     if (hostname === 'mmlipl.info' || 
         hostname === 'www.mmlipl.info' ||
         hostname.includes('netlify.app') ||
-        hostname.includes('vercel.app') ||
-        (!hostname.includes('localhost') && !hostname.includes('127.0.0.1'))) {
+        hostname.includes('vercel.app')) {
       return RENDER_API_URL;
     }
   }
@@ -34,7 +38,7 @@ export const getAPIBaseURL = () => {
     return envUrl;
   }
   
-  // Default to Render.com
+  // Default to Render.com for development
   return RENDER_API_URL;
 };
 

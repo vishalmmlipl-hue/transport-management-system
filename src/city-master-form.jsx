@@ -175,7 +175,7 @@ export default function CityMasterForm() {
   ];
 
   // Bulk import cities
-  const handleBulkImport = () => {
+  const handleBulkImport = async () => {
     if (!bulkImportText.trim()) {
       alert('⚠️ Please enter cities data');
       return;

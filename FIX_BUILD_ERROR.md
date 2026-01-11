@@ -1,55 +1,43 @@
-# ✅ Fixed: Build Error - Duplicate loadCities
+# ✅ Fixed Build Error
 
-## 🔍 Problem
-
-Build was failing with:
+## Problem
 ```
-SyntaxError: Identifier 'loadCities' has already been declared.
+SyntaxError: Unexpected reserved word 'await'. (246:10)
 ```
 
-**Cause:** 
-- Line 8: `loadData: loadCities` from `useCities()` hook
-- Line 63: Old `loadCities` function using `syncService`
-- Both declared the same name
+The `handleBulkImport` function was using `await` but wasn't marked as `async`.
 
 ## ✅ Fix Applied
 
-**Updated `src/city-master-form.jsx`:**
-
-1. ✅ Removed duplicate `loadCities` function
-2. ✅ Using `loadCities` from `useCities()` hook
-3. ✅ Replaced `syncService.save` with `createCity`/`updateCity` hooks
-4. ✅ Replaced `syncService.load` with hook's `loadCities`
-5. ✅ Replaced localStorage with `cities` from hook
-6. ✅ Updated delete to use `removeCity` from hook
-
-## 📋 Changes Made
-
-### Before:
+Changed:
 ```javascript
-const loadCities = async () => {
-  const result = await syncService.load('cities');
-  setCities(result.data);
-};
+const handleBulkImport = () => {
 ```
 
-### After:
+To:
 ```javascript
-const { loadData: loadCities } = useCities();
-// loadCities is now from the hook
+const handleBulkImport = async () => {
 ```
 
-## 🚀 Next Steps
+## 🚀 Rebuild Now
 
-1. **Commit and push:**
-   ```bash
-   git add .
-   git commit -m "Fix city-master-form: remove duplicate loadCities, use hooks"
-   git push
-   ```
+**On your Mac:**
+```bash
+cd /Users/macbook/transport-management-system
+npm run build
+```
 
-2. **Netlify will auto-deploy** - Build should succeed now
+**After build succeeds, upload:**
+```bash
+scp -r build/* root@31.97.107.232:/home/mmlipl/htdocs/mmlipl.in/public/
+```
+
+**Set permissions on server:**
+```bash
+chmod -R 755 /home/mmlipl/htdocs/mmlipl.in/public
+chown -R mmlipl:mmlipl /home/mmlipl/htdocs/mmlipl.in/public
+```
 
 ---
 
-**Build error fixed!** ✅
+**Rebuild now - the error is fixed!** 🚀
