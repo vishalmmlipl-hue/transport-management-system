@@ -52,7 +52,14 @@ export default function TransportManagementApp() {
     try {
       const response = await fetch('https://transport-management-system-wzhx.onrender.com/api/branches');
       const result = await response.json();
-      const activeBranches = (result.data || []).filter(b => b.status === 'Active' || !b.status);
+      // Safety: ensure result.data is an array and filter out invalid entries
+      const allBranches = Array.isArray(result.data) ? result.data : [];
+      const activeBranches = allBranches
+        .filter(b => b && (b.status === 'Active' || !b.status))
+        .map(b => ({
+          ...b,
+          id: b.id || null // Ensure id exists or is null
+        }));
       setBranches(activeBranches);
       
       // Clear localStorage to prevent conflicts
@@ -343,15 +350,20 @@ export default function TransportManagementApp() {
       localStorage.setItem('currentUser', JSON.stringify(updatedUser));
       localStorage.removeItem('adminSelectedBranch');
     } else {
-      const branch = branches.find(b => b && b.id && String(b.id) === String(branchId));
-      if (branch) {
+      // Safety: ensure branches is an array and branchId is valid
+      if (!Array.isArray(branches) || branches.length === 0) {
+        console.warn('Cannot change branch: branches not loaded');
+        return;
+      }
+      const branch = branches.find(b => b && b.id != null && String(b.id) === String(branchId));
+      if (branch && branch.id != null) {
         setSelectedBranch(branch);
         const updatedUser = { ...currentUser, branch: branch.id };
         setCurrentUser(updatedUser);
         localStorage.setItem('currentUser', JSON.stringify(updatedUser));
-            if (branch && branch.id) {
-              localStorage.setItem('adminSelectedBranch', branch.id.toString());
-            }
+        localStorage.setItem('adminSelectedBranch', String(branch.id));
+      } else {
+        console.warn('Branch not found for ID:', branchId);
       }
     }
   };
@@ -903,9 +915,9 @@ export default function TransportManagementApp() {
                 <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>
                   {(() => {
                     // Use branches from state (loaded from server), not localStorage
-                    if (currentUser.branch && branches.length > 0) {
-                      const branch = branches.find(b => b && b.id && String(b.id) === String(currentUser.branch));
-                      return branch ? `${branch.branchName} - ${branch.address?.city || branch.city || ''}` : 'N/A';
+                    if (currentUser?.branch && Array.isArray(branches) && branches.length > 0) {
+                      const branch = branches.find(b => b && b.id != null && String(b.id) === String(currentUser.branch));
+                      return branch ? `${branch.branchName || 'N/A'} - ${branch.address?.city || branch.city || ''}` : 'N/A';
                     }
                     return 'N/A';
                   })()}
@@ -1448,7 +1460,7 @@ export default function TransportManagementApp() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Building2 size={18} style={{ color: 'rgba(255,255,255,0.7)' }} />
                 <select
-                  value={selectedBranch && selectedBranch.id ? selectedBranch.id.toString() : 'all'}
+                  value={selectedBranch && selectedBranch.id != null ? String(selectedBranch.id) : 'all'}
                   onChange={(e) => handleBranchChange(e.target.value)}
                   style={{
                     padding: '8px 12px',
