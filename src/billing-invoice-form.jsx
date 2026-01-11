@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, FileText, DollarSign, Calendar, Printer, X } from 'lucide-react';
+import { Save } from 'lucide-react';
 
 export default function BillingForm() {
   const [allClients, setAllClients] = useState([]);

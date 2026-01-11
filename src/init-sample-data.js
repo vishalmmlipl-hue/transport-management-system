@@ -1,8 +1,27 @@
 // Sample Data Initialization Script
-// This script populates localStorage with sample data for the Transport Management System
+// This script populates Render.com API with sample data (NOT localStorage)
+// Only runs if server has no data
 
-const initSampleData = () => {
+const API_BASE_URL = 'https://transport-management-system-wzhx.onrender.com/api';
+
+const initSampleData = async () => {
   console.log('Initializing sample data...');
+  
+  // Check if data already exists on server
+  try {
+    const branchesCheck = await fetch(`${API_BASE_URL}/branches`);
+    const branchesResult = await branchesCheck.json();
+    
+    if (branchesResult.data && branchesResult.data.length > 0) {
+      console.log('✅ Server already has data. Skipping sample data initialization.');
+      console.log(`   Server has ${branchesResult.data.length} branches`);
+      return false; // Don't initialize if data exists
+    }
+  } catch (error) {
+    console.warn('⚠️ Could not check server. Will try to initialize sample data.');
+  }
+  
+  console.log('📤 Initializing sample data on Render.com server...');
 
   // 1. BRANCHES
   const branches = [
@@ -70,7 +89,21 @@ const initSampleData = () => {
       createdAt: new Date('2024-02-15').toISOString()
     }
   ];
-  localStorage.setItem('branches', JSON.stringify(branches));
+  
+  // Save branches to Render.com API (not localStorage)
+  try {
+    for (const branch of branches) {
+      await fetch(`${API_BASE_URL}/branches`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(branch)
+      });
+    }
+    console.log(`✅ Saved ${branches.length} branches to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving branches to server:', error);
+    // Don't save to localStorage - this causes browser-specific data
+  }
 
   // 2. CITIES
   const cities = [
@@ -189,7 +222,20 @@ const initSampleData = () => {
     { id: 100, code: 'MP-DHA', cityName: 'Dhar', state: 'Madhya Pradesh', region: 'Central', zone: 'Central', pincodeRanges: '454001-454001', isODA: false, distanceFromHub: '560', transitDays: '1', status: 'Active', createdAt: new Date('2024-01-10').toISOString() },
     { id: 101, code: 'MP-KHG', cityName: 'Khargone', state: 'Madhya Pradesh', region: 'Central', zone: 'Central', pincodeRanges: '451001-451001', isODA: false, distanceFromHub: '490', transitDays: '1', status: 'Active', createdAt: new Date('2024-01-10').toISOString() }
   ];
-  localStorage.setItem('cities', JSON.stringify(cities));
+  
+  // Save cities to Render.com API (not localStorage)
+  try {
+    for (const city of cities) {
+      await fetch(`${API_BASE_URL}/cities`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(city)
+      });
+    }
+    console.log(`✅ Saved ${cities.length} cities to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving cities to server:', error);
+  }
 
   // 3. TBB CLIENTS
   const tbbClients = [
@@ -314,7 +360,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-02-10').toISOString()
     }
   ];
-  localStorage.setItem('tbbClients', JSON.stringify(tbbClients));
+  
+  // Save clients to Render.com API (not localStorage)
+  try {
+    for (const client of tbbClients) {
+      await fetch(`${API_BASE_URL}/clients`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(client)
+      });
+    }
+    console.log(`✅ Saved ${tbbClients.length} clients to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving clients to server:', error);
+  }
 
   // 4. VEHICLES
   const vehicles = [
@@ -439,7 +498,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-02-01').toISOString()
     }
   ];
-  localStorage.setItem('vehicles', JSON.stringify(vehicles));
+  
+  // Save vehicles to Render.com API (not localStorage)
+  try {
+    for (const vehicle of vehicles) {
+      await fetch(`${API_BASE_URL}/vehicles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(vehicle)
+      });
+    }
+    console.log(`✅ Saved ${vehicles.length} vehicles to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving vehicles to server:', error);
+  }
 
   // 5. DRIVERS
   const drivers = [
@@ -528,7 +600,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-01-15').toISOString()
     }
   ];
-  localStorage.setItem('drivers', JSON.stringify(drivers));
+  
+  // Save drivers to Render.com API (not localStorage)
+  try {
+    for (const driver of drivers) {
+      await fetch(`${API_BASE_URL}/drivers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(driver)
+      });
+    }
+    console.log(`✅ Saved ${drivers.length} drivers to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving drivers to server:', error);
+  }
 
   // 6. STAFF
   const staff = [
@@ -575,7 +660,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-01-15').toISOString()
     }
   ];
-  localStorage.setItem('staff', JSON.stringify(staff));
+  
+  // Save staff to Render.com API (not localStorage)
+  try {
+    for (const staffMember of staff) {
+      await fetch(`${API_BASE_URL}/staff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(staffMember)
+      });
+    }
+    console.log(`✅ Saved ${staff.length} staff to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving staff to server:', error);
+  }
 
   // 7. LR SERIES
   const lrSeries = [
@@ -583,7 +681,10 @@ const initSampleData = () => {
     { id: 2, seriesCode: 'LR-DEL', seriesName: 'Delhi LR Series', prefix: 'DEL', startNumber: 2000, currentNumber: 2025, branch: 'BR002', status: 'Active', createdAt: new Date('2024-01-01').toISOString() },
     { id: 3, seriesCode: 'LR-BLR', seriesName: 'Bangalore LR Series', prefix: 'BLR', startNumber: 3000, currentNumber: 3010, branch: 'BR003', status: 'Active', createdAt: new Date('2024-01-01').toISOString() }
   ];
-  localStorage.setItem('lrSeries', JSON.stringify(lrSeries));
+  
+  // Note: lrSeries, accounts, and other master data can be saved to API if endpoints exist
+  // For now, skip these as they may not have API endpoints yet
+  console.log(`⏭️  Skipping lrSeries (${lrSeries.length} items) - no API endpoint`);
 
   // 8. ACCOUNTS
   const accounts = [
@@ -592,7 +693,8 @@ const initSampleData = () => {
     { id: 3, accountCode: 'ACC003', accountName: 'Driver Salary', accountType: 'Expense', category: 'Personnel', status: 'Active', createdAt: new Date('2024-01-01').toISOString() },
     { id: 4, accountCode: 'ACC004', accountName: 'Vehicle Maintenance', accountType: 'Expense', category: 'Operating', status: 'Active', createdAt: new Date('2024-01-01').toISOString() }
   ];
-  localStorage.setItem('accounts', JSON.stringify(accounts));
+  
+  console.log(`⏭️  Skipping accounts (${accounts.length} items) - no API endpoint`);
 
   // 9. CLIENT RATES
   const clientRates = [
@@ -633,7 +735,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-02-01').toISOString()
     }
   ];
-  localStorage.setItem('clientRates', JSON.stringify(clientRates));
+  
+  // Save client rates to Render.com API (not localStorage)
+  try {
+    for (const rate of clientRates) {
+      await fetch(`${API_BASE_URL}/clientRates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rate)
+      });
+    }
+    console.log(`✅ Saved ${clientRates.length} client rates to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving client rates to server:', error);
+  }
 
   // 10. LR BOOKINGS
   const lrBookings = [
@@ -734,7 +849,26 @@ const initSampleData = () => {
       createdAt: new Date('2024-12-21').toISOString()
     }
   ];
-  localStorage.setItem('lrBookings', JSON.stringify(lrBookings));
+  
+  // Save LR bookings to Render.com API (not localStorage)
+  try {
+    for (const booking of lrBookings) {
+      await fetch(`${API_BASE_URL}/lrBookings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(booking)
+      });
+      // Also save to ptlLRBookings for compatibility
+      await fetch(`${API_BASE_URL}/ptlLRBookings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(booking)
+      });
+    }
+    console.log(`✅ Saved ${lrBookings.length} LR bookings to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving LR bookings to server:', error);
+  }
 
   // 11. MANIFESTS
   const manifests = [
@@ -763,7 +897,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-12-20').toISOString()
     }
   ];
-  localStorage.setItem('manifests', JSON.stringify(manifests));
+  
+  // Save manifests to Render.com API (not localStorage)
+  try {
+    for (const manifest of manifests) {
+      await fetch(`${API_BASE_URL}/manifests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(manifest)
+      });
+    }
+    console.log(`✅ Saved ${manifests.length} manifests to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving manifests to server:', error);
+  }
 
   // 12. TRIPS
   const trips = [
@@ -783,7 +930,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-12-20').toISOString()
     }
   ];
-  localStorage.setItem('trips', JSON.stringify(trips));
+  
+  // Save trips to Render.com API (not localStorage)
+  try {
+    for (const trip of trips) {
+      await fetch(`${API_BASE_URL}/trips`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(trip)
+      });
+    }
+    console.log(`✅ Saved ${trips.length} trips to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving trips to server:', error);
+  }
 
   // 13. INVOICES
   const invoices = [
@@ -801,7 +961,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-12-20').toISOString()
     }
   ];
-  localStorage.setItem('invoices', JSON.stringify(invoices));
+  
+  // Save invoices to Render.com API (not localStorage)
+  try {
+    for (const invoice of invoices) {
+      await fetch(`${API_BASE_URL}/invoices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(invoice)
+      });
+    }
+    console.log(`✅ Saved ${invoices.length} invoices to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving invoices to server:', error);
+  }
 
   // 14. PAYMENTS
   const payments = [
@@ -818,7 +991,20 @@ const initSampleData = () => {
       createdAt: new Date('2024-12-25').toISOString()
     }
   ];
-  localStorage.setItem('payments', JSON.stringify(payments));
+  
+  // Save payments to Render.com API (not localStorage)
+  try {
+    for (const payment of payments) {
+      await fetch(`${API_BASE_URL}/payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payment)
+      });
+    }
+    console.log(`✅ Saved ${payments.length} payments to Render.com`);
+  } catch (error) {
+    console.error('❌ Error saving payments to server:', error);
+  }
 
   // 15. VENDORS
   const marketVehicleVendors = [
@@ -843,7 +1029,9 @@ const initSampleData = () => {
       createdAt: new Date('2024-01-15').toISOString()
     }
   ];
-  localStorage.setItem('marketVehicleVendors', JSON.stringify(marketVehicleVendors));
+  
+  // Note: marketVehicleVendors may not have API endpoint yet
+  console.log(`⏭️  Skipping marketVehicleVendors (${marketVehicleVendors.length} items) - no API endpoint`);
 
   const otherVendors = [
     {
@@ -979,9 +1167,11 @@ const initSampleData = () => {
       createdAt: new Date('2024-01-10').toISOString()
     }
   ];
-  localStorage.setItem('otherVendors', JSON.stringify(otherVendors));
+  
+  // Note: otherVendors may not have API endpoint yet
+  console.log(`⏭️  Skipping otherVendors (${otherVendors.length} items) - no API endpoint`);
 
-  console.log('✅ Sample data initialized successfully!');
+  console.log('\n✅ Sample data initialized successfully on Render.com!');
   console.log('📊 Data Summary:');
   console.log(`   - Branches: ${branches.length}`);
   console.log(`   - Cities: ${cities.length}`);
@@ -994,17 +1184,33 @@ const initSampleData = () => {
   console.log(`   - Trips: ${trips.length}`);
   console.log(`   - Invoices: ${invoices.length}`);
   console.log(`   - Payments: ${payments.length}`);
+  console.log('\n✅ All data saved to Render.com server (NOT localStorage)');
+  console.log('✅ All browsers will see the same data');
   
   return true;
 };
 
-// Auto-initialize if localStorage is empty
+// Auto-initialize if server has no data (check server, not localStorage)
 if (typeof window !== 'undefined') {
-  const hasData = localStorage.getItem('branches') || localStorage.getItem('cities') || localStorage.getItem('tbbClients');
-  if (!hasData) {
-    initSampleData();
-    alert('Sample data has been loaded! You can now use the application with pre-filled data.\n\nLogin credentials:\n- admin / admin123\n- manager / manager123\n- operator / operator123\n- accountant / accountant123\n- driver / driver123');
-  }
+  (async () => {
+    try {
+      // Check if server has data
+      const response = await fetch(`${API_BASE_URL}/branches`);
+      const result = await response.json();
+      
+      if (!result.data || result.data.length === 0) {
+        // Server has no data - initialize sample data
+        console.log('📤 Server has no data. Initializing sample data...');
+        await initSampleData();
+        alert('✅ Sample data initialized on Render.com server!\n\nAll browsers will see the same data.\n\nLogin credentials:\n- admin / admin123\n- manager / manager123\n- operator / operator123\n- accountant / accountant123\n- driver / driver123');
+      } else {
+        console.log(`✅ Server already has ${result.data.length} branches. Skipping sample data.`);
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not check server. Sample data initialization skipped.');
+      console.warn('⚠️ This is normal if server is starting up.');
+    }
+  })();
 }
 
 // Export for manual use

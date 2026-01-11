@@ -1,31 +1,26 @@
 import React, { useState, useEffect } from 'react';
+import { useFTLLRBookings, usePTLLRBookings, usePODs } from '../hooks/useDataSync';
 
 const LRTracking = () => {
-  const [bookings, setBookings] = useState([]);
+  const { data: ftlBookings, loading: ftlLoading } = useFTLLRBookings();
+  const { data: ptlBookings, loading: ptlLoading } = usePTLLRBookings();
+  const { data: pods, loading: podsLoading } = usePODs();
+  
   const [selectedLR, setSelectedLR] = useState(null);
-  const [pods, setPods] = useState([]);
+
+  // Combine bookings from both sources
+  const bookings = [...(ftlBookings || []), ...(ptlBookings || [])];
+  const loading = ftlLoading || ptlLoading || podsLoading;
 
   useEffect(() => {
-    loadData();
-    const handleStorageChange = () => {
-      loadData();
+    const handlePodCreated = () => {
+      // Data will auto-reload via hooks
     };
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('podCreated', handleStorageChange);
+    window.addEventListener('podCreated', handlePodCreated);
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('podCreated', handleStorageChange);
+      window.removeEventListener('podCreated', handlePodCreated);
     };
   }, []);
-
-  const loadData = () => {
-    const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-    const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-    setBookings([...ftlBookings, ...ptlBookings]);
-    
-    const savedPods = JSON.parse(localStorage.getItem('pods') || '[]');
-    setPods(savedPods);
-  };
 
   const handleLRSelect = (lrNumber) => {
     const booking = bookings.find(b => b.lrNumber === lrNumber);
@@ -44,6 +39,10 @@ const LRTracking = () => {
     link.click();
     document.body.removeChild(link);
   };
+
+  if (loading) {
+    return <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>Loading data from Render.com...</div>;
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>

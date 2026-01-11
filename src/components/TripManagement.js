@@ -1,42 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
-import syncService from '../utils/sync-service';
+import { useTrips, useFTLLRBookings, usePTLLRBookings } from '../hooks/useDataSync';
 
 const TripManagement = () => {
   const [activeTab, setActiveTab] = useState('create'); // 'create', 'addExpense', 'viewExpenses'
-  const [trips, setTrips] = useState([]);
-  const [availableLRs, setAvailableLRs] = useState([]);
+  
+  const { data: trips, loading: tripsLoading, create: createTrip, loadData: loadTrips } = useTrips();
+  const { data: ftlBookings, loading: ftlLoading } = useFTLLRBookings();
+  const { data: ptlBookings, loading: ptlLoading } = usePTLLRBookings();
 
-  useEffect(() => {
-    loadTrips();
-    loadLRs();
-  }, []);
-
-  const loadTrips = async () => {
-    try {
-      const result = await syncService.load('trips');
-      setTrips(result.data);
-    } catch (error) {
-      console.error('Error loading trips:', error);
-      // Fallback to localStorage
-      const savedTrips = JSON.parse(localStorage.getItem('trips') || '[]');
-      setTrips(savedTrips);
-    }
-  };
-
-  const loadLRs = async () => {
-    try {
-      const ftlResult = await syncService.load('ftlLRBookings');
-      const ptlResult = await syncService.load('ptlLRBookings');
-      setAvailableLRs([...ftlResult.data, ...ptlResult.data]);
-    } catch (error) {
-      console.error('Error loading LR bookings:', error);
-      // Fallback to localStorage
-      const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-      const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-      setAvailableLRs([...ftlBookings, ...ptlBookings]);
-    }
-  };
+  // Combine bookings from both sources
+  const availableLRs = [...(ftlBookings || []), ...(ptlBookings || [])];
+  const loading = tripsLoading || ftlLoading || ptlLoading;
 
   return (
     <div style={{ maxWidth: '1400px', margin: '20px auto', padding: '20px' }}>
@@ -99,16 +74,22 @@ const TripManagement = () => {
         </button>
       </div>
 
+      {loading && <div style={{ padding: '20px', textAlign: 'center' }}>Loading data from Render.com...</div>}
+      
       {/* Tab Content */}
-      {activeTab === 'create' && <CreateTripForm trips={trips} setTrips={setTrips} availableLRs={availableLRs} loadTrips={loadTrips} />}
-      {activeTab === 'addExpense' && <AddTripExpenseForm trips={trips} loadTrips={loadTrips} />}
-      {activeTab === 'viewExpenses' && <ViewEditFinalizeExpenses trips={trips} loadTrips={loadTrips} />}
+      {!loading && (
+        <>
+          {activeTab === 'create' && <CreateTripForm trips={trips} availableLRs={availableLRs} loadTrips={loadTrips} createTrip={createTrip} />}
+          {activeTab === 'addExpense' && <AddTripExpenseForm trips={trips} loadTrips={loadTrips} />}
+          {activeTab === 'viewExpenses' && <ViewEditFinalizeExpenses trips={trips} loadTrips={loadTrips} />}
+        </>
+      )}
     </div>
   );
 };
 
 // Form 1: Create Trip
-const CreateTripForm = ({ trips, setTrips, availableLRs, loadTrips }) => {
+const CreateTripForm = ({ trips, availableLRs, loadTrips, createTrip }) => {
   const [formData, setFormData] = useState({
     tripNumber: '',
     vehicleNumber: '',
@@ -146,24 +127,14 @@ const CreateTripForm = ({ trips, setTrips, availableLRs, loadTrips }) => {
     }
 
     const trip = {
-      id: Date.now().toString(),
       ...formData,
       status: 'Active',
       createdAt: new Date().toISOString()
     };
 
     try {
-      // Save to API server and localStorage
-      const result = await syncService.save('trips', trip);
-      
-      if (result.synced) {
-        alert('Trip created successfully and synced across all systems!');
-      } else {
-        alert('Trip created successfully! (Saved locally - server may be unavailable)');
-      }
-
-      const updatedTrips = [...trips, trip];
-      setTrips(updatedTrips);
+      await createTrip(trip);
+      alert('✅ Trip created successfully on Render.com server!');
       
       window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'trip', data: trip } }));
       
@@ -181,7 +152,7 @@ const CreateTripForm = ({ trips, setTrips, availableLRs, loadTrips }) => {
       loadTrips();
     } catch (error) {
       console.error('Error saving trip:', error);
-      alert('Error saving trip. Please try again.');
+      alert('❌ Error saving trip: ' + error.message);
     }
   };
 

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Save, MapPin, Search, RefreshCw, Database, AlertCircle, X, Upload, Download, Plus, Edit2, Trash2 } from 'lucide-react';
+import { useCities } from './hooks/useDataSync';
 import initSampleData from './init-sample-data';
-import syncService from './utils/sync-service';
 
 export default function CityMasterForm() {
-  const [cities, setCities] = useState([]);
+  // Use hooks for cities - ensures data from Render.com
+  const { data: cities, loading: citiesLoading, create: createCity, update: updateCity, remove: removeCity, loadData: loadCities } = useCities();
   const [filteredCities, setFilteredCities] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterState, setFilterState] = useState('');
@@ -32,8 +33,9 @@ export default function CityMasterForm() {
   });
 
   useEffect(() => {
-    loadCities();
-  }, []);
+    // Clear localStorage to prevent conflicts
+    localStorage.removeItem('cities');
+  }, [cities]);
 
   useEffect(() => {
     filterCities();

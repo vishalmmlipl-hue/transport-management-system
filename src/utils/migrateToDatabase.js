@@ -1,15 +1,17 @@
 // Data Migration Utility
-// Migrates data from localStorage to Supabase database
-// Run this once after setting up Supabase
+// DISABLED: This app uses Render.com API, not Supabase
+// Use MIGRATE_AND_SYNC_DATA.js instead to migrate to Render.com
 
-import { supabase, isSupabaseConfigured } from '../supabaseClient';
-import { tableNames } from '../services/dataService';
+import { isSupabaseConfigured } from '../supabaseClient';
 
 export const migrateToDatabase = async () => {
-  if (!isSupabaseConfigured()) {
-    console.warn('⚠️ Supabase not configured. Cannot migrate data.');
-    return { success: false, message: 'Supabase not configured' };
-  }
+  // Supabase is disabled - app uses Render.com API
+  console.log('ℹ️ Supabase migration disabled - app uses Render.com API');
+  console.log('💡 Use MIGRATE_AND_SYNC_DATA.js to migrate data to Render.com');
+  return { 
+    success: false, 
+    message: 'Supabase disabled - use Render.com API migration script instead' 
+  };
 
   const results = {
     success: true,

@@ -1,29 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import syncService from '../utils/sync-service';
+import React, { useState } from 'react';
+import { useFTLLRBookings, usePTLLRBookings } from '../hooks/useDataSync';
 
 const ModifyLR = () => {
-  const [bookings, setBookings] = useState([]);
+  const { data: ftlBookings, loading: ftlLoading, update: updateFTL } = useFTLLRBookings();
+  const { data: ptlBookings, loading: ptlLoading, update: updatePTL } = usePTLLRBookings();
+  
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [formData, setFormData] = useState({});
   const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    loadBookings();
-  }, []);
-
-  const loadBookings = async () => {
-    try {
-      const ftlResult = await syncService.load('ftlLRBookings');
-      const ptlResult = await syncService.load('ptlLRBookings');
-      setBookings([...ftlResult.data, ...ptlResult.data]);
-    } catch (error) {
-      console.error('Error loading bookings:', error);
-      // Fallback to localStorage
-      const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-      const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-      setBookings([...ftlBookings, ...ptlBookings]);
-    }
-  };
+  // Combine bookings from both sources
+  const bookings = [...(ftlBookings || []), ...(ptlBookings || [])];
+  const loading = ftlLoading || ptlLoading;
 
   const handleSelectBooking = (booking) => {
     setSelectedBooking(booking);
@@ -75,34 +64,38 @@ const ModifyLR = () => {
       alert('Please select a booking to modify');
       return;
     }
-    if (validateForm()) {
-      const updatedBooking = {
-        ...selectedBooking,
-        ...formData,
-        updatedAt: new Date().toISOString()
-      };
+    if (!validateForm()) return;
 
-      try {
-        const storageKey = selectedBooking.type === 'PTL' ? 'ptlLRBookings' : 'ftlLRBookings';
-        // Update in API server and localStorage
-        const result = await syncService.save(storageKey, updatedBooking, true, selectedBooking.id);
-        
-        if (result.synced) {
-          alert('Booking updated successfully and synced across all systems!');
-        } else {
-          alert('Booking updated successfully! (Saved locally - server may be unavailable)');
-        }
+    const updatedBooking = {
+      ...formData,
+      updatedAt: new Date().toISOString()
+    };
 
-        window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: selectedBooking.type === 'PTL' ? 'ptlBooking' : 'ftlBooking', data: updatedBooking } }));
-        loadBookings();
-        setSelectedBooking(null);
-        setFormData({});
-      } catch (error) {
-        console.error('Error updating booking:', error);
-        alert('Error updating booking. Please try again.');
+    try {
+      setSaving(true);
+      const isPTL = selectedBooking.type === 'PTL';
+      if (isPTL) {
+        await updatePTL(selectedBooking.id, updatedBooking);
+      } else {
+        await updateFTL(selectedBooking.id, updatedBooking);
       }
+      
+      alert('✅ Booking updated successfully on Render.com server!');
+
+      window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: isPTL ? 'ptlBooking' : 'ftlBooking', data: updatedBooking } }));
+      setSelectedBooking(null);
+      setFormData({});
+    } catch (error) {
+      console.error('Error updating booking:', error);
+      alert('❌ Error updating booking: ' + error.message);
+    } finally {
+      setSaving(false);
     }
   };
+
+  if (loading) {
+    return <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>Loading bookings from Render.com...</div>;
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>
@@ -300,17 +293,19 @@ const ModifyLR = () => {
 
           <button
             type="submit"
+            disabled={saving}
             style={{
               padding: '10px 20px',
-              backgroundColor: '#28a745',
+              backgroundColor: saving ? '#6c757d' : '#28a745',
               color: 'white',
               border: 'none',
               borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '16px'
+              cursor: saving ? 'not-allowed' : 'pointer',
+              fontSize: '16px',
+              opacity: saving ? 0.6 : 1
             }}
           >
-            Update Booking
+            {saving ? 'Updating...' : 'Update Booking'}
           </button>
         </form>
       )}

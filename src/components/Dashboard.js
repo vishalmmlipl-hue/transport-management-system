@@ -1,49 +1,50 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
+import { 
+  useFTLLRBookings, 
+  usePTLLRBookings, 
+  useTrips, 
+  usePODs, 
+  useManifests, 
+  useInvoices, 
+  useStaff 
+} from '../hooks/useDataSync';
 
 const Dashboard = () => {
-  const [stats, setStats] = useState({
-    ftlBookings: 0,
-    ptlBookings: 0,
-    trips: 0,
-    pods: 0,
-    manifests: 0,
-    invoices: 0,
-    staff: 0,
-    tripSheets: 0,
-  });
+  const { data: ftlBookings, loading: ftlLoading } = useFTLLRBookings();
+  const { data: ptlBookings, loading: ptlLoading } = usePTLLRBookings();
+  const { data: trips, loading: tripsLoading } = useTrips();
+  const { data: pods, loading: podsLoading } = usePODs();
+  const { data: manifests, loading: manifestsLoading } = useManifests();
+  const { data: invoices, loading: invoicesLoading } = useInvoices();
+  const { data: staff, loading: staffLoading } = useStaff();
+
+  const loading = ftlLoading || ptlLoading || tripsLoading || podsLoading || 
+                  manifestsLoading || invoicesLoading || staffLoading;
+
+  const stats = {
+    ftlBookings: ftlBookings?.length || 0,
+    ptlBookings: ptlBookings?.length || 0,
+    trips: trips?.length || 0,
+    pods: pods?.length || 0,
+    manifests: manifests?.length || 0,
+    invoices: invoices?.length || 0,
+    staff: staff?.length || 0,
+    tripSheets: 0, // TODO: Add tripSheets hook if needed
+  };
 
   useEffect(() => {
-    loadStats();
-    const interval = setInterval(loadStats, 30000);
     const handleDataUpdate = () => {
-      loadStats();
+      // Data will auto-reload via hooks
     };
-    window.addEventListener('storage', handleDataUpdate);
     window.addEventListener('dataUpdated', handleDataUpdate);
-    
     return () => {
-      clearInterval(interval);
-      window.removeEventListener('storage', handleDataUpdate);
       window.removeEventListener('dataUpdated', handleDataUpdate);
     };
   }, []);
 
-  const loadStats = () => {
-    try {
-      setStats({
-        ftlBookings: JSON.parse(localStorage.getItem('ftlLRBookings') || '[]').length,
-        ptlBookings: JSON.parse(localStorage.getItem('ptlLRBookings') || '[]').length,
-        trips: JSON.parse(localStorage.getItem('trips') || '[]').length,
-        pods: JSON.parse(localStorage.getItem('pods') || '[]').length,
-        manifests: JSON.parse(localStorage.getItem('manifests') || '[]').length,
-        invoices: JSON.parse(localStorage.getItem('invoices') || '[]').length,
-        staff: JSON.parse(localStorage.getItem('staffMaster') || '[]').length,
-        tripSheets: JSON.parse(localStorage.getItem('tripSheets') || '[]').length,
-      });
-    } catch (error) {
-      console.error('Error loading stats:', error);
-    }
-  };
+  if (loading) {
+    return <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>Loading dashboard data from Render.com...</div>;
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>

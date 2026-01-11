@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useStaff } from '../hooks/useDataSync';
 
 const StaffMaster = () => {
-  const [staff, setStaff] = useState([]);
+  const { data: staff, loading, error, create, update, remove } = useStaff();
   const [formData, setFormData] = useState({
     staffName: '',
     branch: '',
@@ -12,15 +13,7 @@ const StaffMaster = () => {
   });
   const [errors, setErrors] = useState({});
   const [editingId, setEditingId] = useState(null);
-
-  useEffect(() => {
-    loadStaff();
-  }, []);
-
-  const loadStaff = () => {
-    const savedStaff = JSON.parse(localStorage.getItem('staffMaster') || '[]');
-    setStaff(savedStaff);
-  };
+  const [saving, setSaving] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -48,25 +41,29 @@ const StaffMaster = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (validateForm()) {
+    if (!validateForm()) return;
+
+    try {
+      setSaving(true);
+      
       if (editingId) {
-        const updated = staff.map(s => s.id === editingId ? { ...s, ...formData, updatedAt: new Date().toISOString() } : s);
-        localStorage.setItem('staffMaster', JSON.stringify(updated));
+        await update(editingId, {
+          ...formData,
+          updatedAt: new Date().toISOString()
+        });
+        alert('✅ Staff updated on Render.com server!');
         setEditingId(null);
       } else {
-        const newStaff = {
-          id: Date.now().toString(),
+        await create({
           ...formData,
           createdAt: new Date().toISOString()
-        };
-        const updated = [...staff, newStaff];
-        localStorage.setItem('staffMaster', JSON.stringify(updated));
+        });
+        alert('✅ Staff saved to Render.com server!');
       }
       
       window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'staff', data: formData } }));
-      alert(editingId ? 'Staff updated successfully!' : 'Staff added successfully!');
       
       setFormData({
         staffName: '',
@@ -76,7 +73,11 @@ const StaffMaster = () => {
         phone: '',
         address: '',
       });
-      loadStaff();
+    } catch (err) {
+      alert('❌ Error: ' + err.message);
+      console.error('Error saving staff:', err);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -92,14 +93,34 @@ const StaffMaster = () => {
     setEditingId(staffMember.id);
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this staff member?')) {
-      const updated = staff.filter(s => s.id !== id);
-      localStorage.setItem('staffMaster', JSON.stringify(updated));
-      window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'staff', data: null } }));
-      loadStaff();
+      try {
+        await remove(id);
+        alert('✅ Staff deleted from Render.com server!');
+        window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'staff', data: null } }));
+      } catch (err) {
+        alert('❌ Error: ' + err.message);
+        console.error('Error deleting staff:', err);
+      }
     }
   };
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px', textAlign: 'center' }}>
+        <p>Loading staff from Render.com server...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px', textAlign: 'center', color: 'red' }}>
+        <p>Error loading staff: {error}</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>
@@ -228,17 +249,19 @@ const StaffMaster = () => {
         </div>
         <button
           type="submit"
+          disabled={saving}
           style={{
             padding: '10px 20px',
             backgroundColor: editingId ? '#ffc107' : '#007bff',
             color: 'white',
             border: 'none',
             borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '16px'
+            cursor: saving ? 'not-allowed' : 'pointer',
+            fontSize: '16px',
+            opacity: saving ? 0.6 : 1
           }}
         >
-          {editingId ? 'Update Staff' : 'Add Staff'}
+          {saving ? 'Saving...' : editingId ? 'Update Staff' : 'Add Staff'}
         </button>
         {editingId && (
           <button

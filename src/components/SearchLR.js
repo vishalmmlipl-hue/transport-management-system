@@ -1,44 +1,37 @@
 import React, { useState, useEffect } from 'react';
+import { useFTLLRBookings, usePTLLRBookings } from '../hooks/useDataSync';
 
 const SearchLR = () => {
+  const { data: ftlBookings, loading: ftlLoading } = useFTLLRBookings();
+  const { data: ptlBookings, loading: ptlLoading } = usePTLLRBookings();
   const [searchTerm, setSearchTerm] = useState('');
-  const [bookings, setBookings] = useState([]);
-  const [filteredBookings, setFilteredBookings] = useState([]);
+
+  // Combine bookings from both sources
+  const bookings = [...(ftlBookings || []), ...(ptlBookings || [])];
+  const loading = ftlLoading || ptlLoading;
 
   useEffect(() => {
-    loadBookings();
-    const handleStorageChange = () => {
-      loadBookings();
+    const handleBookingCreated = () => {
+      // Data will auto-reload via hooks
     };
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('lrBookingCreated', handleStorageChange);
+    window.addEventListener('lrBookingCreated', handleBookingCreated);
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('lrBookingCreated', handleStorageChange);
+      window.removeEventListener('lrBookingCreated', handleBookingCreated);
     };
   }, []);
 
-  useEffect(() => {
-    if (searchTerm.trim()) {
-      const filtered = bookings.filter(booking =>
+  const filteredBookings = searchTerm.trim()
+    ? bookings.filter(booking =>
         booking.lrNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (booking.lrReferenceNumber && booking.lrReferenceNumber.toLowerCase().includes(searchTerm.toLowerCase())) ||
         booking.fromLocation.toLowerCase().includes(searchTerm.toLowerCase()) ||
         booking.toLocation.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-      setFilteredBookings(filtered);
-    } else {
-      setFilteredBookings(bookings);
-    }
-  }, [searchTerm, bookings]);
+      )
+    : bookings;
 
-  const loadBookings = () => {
-    const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-    const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-    const all = [...ftlBookings, ...ptlBookings];
-    setBookings(all);
-    setFilteredBookings(all);
-  };
+  if (loading) {
+    return <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>Loading bookings from Render.com...</div>;
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>

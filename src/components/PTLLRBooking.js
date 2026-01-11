@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import syncService from '../utils/sync-service';
+import { usePTLLRBookings } from '../hooks/useDataSync';
 
 const PTLLRBooking = () => {
+  const { create: createPTLBooking } = usePTLLRBookings();
   const [formData, setFormData] = useState({
     lrNumber: '',
     lrReferenceNumber: '',
@@ -13,6 +14,7 @@ const PTLLRBooking = () => {
     branch: '',
   });
   const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -48,41 +50,37 @@ const PTLLRBooking = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (validateForm()) {
-      const bookingData = {
-        id: Date.now().toString(),
-        type: 'PTL',
-        ...formData,
-        createdAt: new Date().toISOString()
-      };
+    if (!validateForm()) return;
+
+    const bookingData = {
+      type: 'PTL',
+      ...formData,
+      createdAt: new Date().toISOString()
+    };
+    
+    try {
+      setSaving(true);
+      await createPTLBooking(bookingData);
+      alert('✅ PTL Booking saved to Render.com server!');
       
-      try {
-        // Save to API server and localStorage
-        const result = await syncService.save('ptlLRBookings', bookingData);
-        
-        if (result.synced) {
-          alert('PTL Booking submitted successfully and synced across all systems!');
-        } else {
-          alert('PTL Booking submitted successfully! (Saved locally - server may be unavailable)');
-        }
-        
-        window.dispatchEvent(new CustomEvent('lrBookingCreated', { detail: bookingData }));
-        window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'ptlBooking', data: bookingData } }));
-        
-        setFormData({
-          lrNumber: '',
-          lrReferenceNumber: '',
-          fromLocation: '',
-          toLocation: '',
-          invoiceNumber: '',
-          ewaybillNumber: '',
-          ewaybillDate: '',
-          branch: '',
-        });
-      } catch (error) {
-        console.error('Error saving PTL booking:', error);
-        alert('Error saving booking. Please try again.');
-      }
+      window.dispatchEvent(new CustomEvent('lrBookingCreated', { detail: bookingData }));
+      window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'ptlBooking', data: bookingData } }));
+      
+      setFormData({
+        lrNumber: '',
+        lrReferenceNumber: '',
+        fromLocation: '',
+        toLocation: '',
+        invoiceNumber: '',
+        ewaybillNumber: '',
+        ewaybillDate: '',
+        branch: '',
+      });
+    } catch (error) {
+      console.error('Error saving PTL booking:', error);
+      alert('❌ Error saving booking: ' + error.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -252,18 +250,20 @@ const PTLLRBooking = () => {
 
         <button
           type="submit"
+          disabled={saving}
           style={{
             width: '100%',
             padding: '10px',
-            backgroundColor: '#007bff',
+            backgroundColor: saving ? '#6c757d' : '#007bff',
             color: 'white',
             border: 'none',
             borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '16px'
+            cursor: saving ? 'not-allowed' : 'pointer',
+            fontSize: '16px',
+            opacity: saving ? 0.6 : 1
           }}
         >
-          Submit Booking
+          {saving ? 'Saving...' : 'Submit Booking'}
         </button>
       </form>
     </div>

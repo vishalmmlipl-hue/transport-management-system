@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Shield, CreditCard, CheckCircle, AlertCircle, Loader, Search, Upload, X, Trash2 } from 'lucide-react';
+import { useDrivers } from './hooks/useDataSync';
 
 export default function DriverMasterWithGovVerification() {
-  const [drivers, setDrivers] = useState([]);
+  const { data: drivers, loading, error, create, remove, setData } = useDrivers();
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   
   // Verification states
@@ -20,9 +21,8 @@ export default function DriverMasterWithGovVerification() {
   const [licenseImage, setLicenseImage] = useState('');
   const [aadharImage, setAadharImage] = useState('');
 
-  useEffect(() => {
-    setDrivers(JSON.parse(localStorage.getItem('drivers') || '[]'));
-  }, []);
+  // Data is loaded automatically by useDrivers hook
+  // No need for useEffect to load from localStorage
 
   const [formData, setFormData] = useState({
     driverName: '',
@@ -389,10 +389,7 @@ export default function DriverMasterWithGovVerification() {
       return;
     }
     
-    const existingDrivers = JSON.parse(localStorage.getItem('drivers') || '[]');
-    
     const newDriver = {
-      id: Date.now(),
       ...formData,
       licenseImage,
       aadharImage,
@@ -402,9 +399,14 @@ export default function DriverMasterWithGovVerification() {
       createdAt: new Date().toISOString()
     };
 
-    existingDrivers.push(newDriver);
-    localStorage.setItem('drivers', JSON.stringify(existingDrivers));
-    setDrivers(existingDrivers);
+    try {
+      await create(newDriver);
+      alert('✅ Driver saved to Render.com server!');
+    } catch (err) {
+      alert('❌ Error saving driver: ' + err.message);
+      console.error('Error saving driver:', err);
+      return; // Don't reset form if save failed
+    }
 
     setShowSuccessMessage(true);
     setTimeout(() => setShowSuccessMessage(false), 3000);
@@ -451,11 +453,15 @@ export default function DriverMasterWithGovVerification() {
     }, 100);
   };
 
-  const deleteDriver = (id) => {
+  const deleteDriver = async (id) => {
     if (window.confirm('Are you sure you want to delete this driver?')) {
-      const updated = drivers.filter(d => d.id !== id);
-      localStorage.setItem('drivers', JSON.stringify(updated));
-      setDrivers(updated);
+      try {
+        await remove(id);
+        alert('✅ Driver deleted from Render.com server!');
+      } catch (err) {
+        alert('❌ Error deleting driver: ' + err.message);
+        console.error('Error deleting driver:', err);
+      }
     }
   };
 

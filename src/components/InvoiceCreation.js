@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import syncService from '../utils/sync-service';
+import React, { useState } from 'react';
+import { useFTLLRBookings, usePTLLRBookings, useInvoices } from '../hooks/useDataSync';
 
 const InvoiceCreation = () => {
-  const [bookings, setBookings] = useState([]);
+  const { data: ftlBookings, loading: ftlLoading } = useFTLLRBookings();
+  const { data: ptlBookings, loading: ptlLoading } = usePTLLRBookings();
+  const { create: createInvoice } = useInvoices();
+  
   const [selectedBookings, setSelectedBookings] = useState([]);
   const [invoiceData, setInvoiceData] = useState({
     invoiceNumber: '',
@@ -10,24 +13,11 @@ const InvoiceCreation = () => {
     customerName: '',
     amount: '',
   });
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    loadBookings();
-  }, []);
-
-  const loadBookings = async () => {
-    try {
-      const ftlResult = await syncService.load('ftlLRBookings');
-      const ptlResult = await syncService.load('ptlLRBookings');
-      setBookings([...ftlResult.data, ...ptlResult.data]);
-    } catch (error) {
-      console.error('Error loading bookings:', error);
-      // Fallback to localStorage
-      const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-      const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-      setBookings([...ftlBookings, ...ptlBookings]);
-    }
-  };
+  // Combine bookings from both sources
+  const bookings = [...(ftlBookings || []), ...(ptlBookings || [])];
+  const loading = ftlLoading || ptlLoading;
 
   const handleSelectBooking = (bookingId) => {
     setSelectedBookings(prev => {
@@ -48,7 +38,6 @@ const InvoiceCreation = () => {
 
     const selectedLRs = bookings.filter(b => selectedBookings.includes(b.id));
     const invoice = {
-      id: Date.now().toString(),
       invoiceNumber: invoiceData.invoiceNumber || `INV-${Date.now()}`,
       date: invoiceData.date,
       customerName: invoiceData.customerName,
@@ -58,14 +47,9 @@ const InvoiceCreation = () => {
     };
 
     try {
-      // Save to API server and localStorage
-      const result = await syncService.save('invoices', invoice);
-      
-      if (result.synced) {
-        alert('Invoice created successfully and synced across all systems!');
-      } else {
-        alert('Invoice created successfully! (Saved locally - server may be unavailable)');
-      }
+      setSaving(true);
+      await createInvoice(invoice);
+      alert('✅ Invoice created successfully on Render.com server!');
 
       window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'invoice', data: invoice } }));
       
@@ -78,9 +62,15 @@ const InvoiceCreation = () => {
       });
     } catch (error) {
       console.error('Error saving invoice:', error);
-      alert('Error saving invoice. Please try again.');
+      alert('❌ Error saving invoice: ' + error.message);
+    } finally {
+      setSaving(false);
     }
   };
+
+  if (loading) {
+    return <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>Loading bookings from Render.com...</div>;
+  }
 
   return (
     <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '20px' }}>
@@ -161,17 +151,19 @@ const InvoiceCreation = () => {
         </div>
         <button
           type="submit"
+          disabled={saving}
           style={{
             padding: '10px 20px',
-            backgroundColor: '#28a745',
+            backgroundColor: saving ? '#6c757d' : '#28a745',
             color: 'white',
             border: 'none',
             borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '16px'
+            cursor: saving ? 'not-allowed' : 'pointer',
+            fontSize: '16px',
+            opacity: saving ? 0.6 : 1
           }}
         >
-          Create Invoice
+          {saving ? 'Creating...' : 'Create Invoice'}
         </button>
       </form>
 

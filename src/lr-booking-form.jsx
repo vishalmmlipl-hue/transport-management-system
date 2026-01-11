@@ -1,14 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Calculator, Printer, Search, Edit2 } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
+import { useLRBookings, usePTLLRBookings } from './hooks/useDataSync';
 
 export default function LRBookingForm() {
-  // Load TBB clients from localStorage
+  // Use hooks for bookings
+  const { create: createLRBooking } = useLRBookings();
+  const { create: createPTLBooking } = usePTLLRBookings();
+  
+  // Load TBB clients from localStorage (will be updated later)
   const [tbbClients, setTbbClients] = useState([]);
   const [cities, setCities] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [branches, setBranches] = useState([]);
   const [clientRates, setClientRates] = useState([]);
+  const [saving, setSaving] = useState(false);
 
   const [selectedClient, setSelectedClient] = useState(null);
   const [selectedOrigin, setSelectedOrigin] = useState(null);
@@ -139,6 +145,7 @@ export default function LRBookingForm() {
   }, [formData.destination, cities, selectedDestination]);
 
   // Function to get the next LR number from the last saved LR
+  // Note: This will need to be updated to fetch from API, but keeping localStorage fallback for now
   const getNextLRNumber = () => {
     const existingLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
     if (existingLRs.length === 0) {
@@ -1229,30 +1236,32 @@ export default function LRBookingForm() {
     isFreightManual.current = false;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Save LR to localStorage - save to both lrBookings and ptlLRBookings for compatibility
-    const existingLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    const existingPTLLRs = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-    
     const newLR = {
-      id: Date.now(),
       ...formData,
       cftEntries: cftEntries, // Include CFT entries for dimensions
       status: 'Booked',
       createdAt: new Date().toISOString()
     };
     
-    existingLRs.push(newLR);
-    existingPTLLRs.push(newLR);
-    
-    localStorage.setItem('lrBookings', JSON.stringify(existingLRs));
-    localStorage.setItem('ptlLRBookings', JSON.stringify(existingPTLLRs));
-    
-    // Store saved LR ID and show dialog
-    setLastSavedLRId(newLR.id);
-    setShowSaveDialog(true);
+    try {
+      setSaving(true);
+      // Save to both LRBookings and PTLLRBookings for compatibility
+      await createLRBooking(newLR);
+      await createPTLBooking(newLR);
+      
+      // Store saved LR ID and show dialog
+      setLastSavedLRId(newLR.id || Date.now());
+      setShowSaveDialog(true);
+      alert('✅ LR Booking saved to Render.com server!');
+    } catch (error) {
+      console.error('Error saving LR booking:', error);
+      alert('❌ Error saving LR booking: ' + error.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handlePrintLR = () => {

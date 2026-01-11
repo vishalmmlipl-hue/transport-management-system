@@ -619,16 +619,6 @@ export default function TripManagementForm() {
     return revenue;
   };
 
-  // Calculate total revenue for all trips with the same trip number (round trip)
-  const calculateTotalRevenueForTripNumber = (tripNumber) => {
-    const tripsWithSameNumber = trips.filter(t => t.tripNumber === tripNumber);
-    return tripsWithSameNumber.reduce((sum, trip) => sum + calculateTripRevenue(trip), 0);
-  };
-
-  // Get all trips with the same trip number (for round trips)
-  const getTripsWithSameNumber = (tripNumber) => {
-    return trips.filter(t => t.tripNumber === tripNumber);
-  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 p-6">
@@ -2912,7 +2902,7 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors }) {
         fuelAmount: amount
       }));
     }
-  }, [fuelEditForm.state, fuelEditForm.fuelType, fuelEditForm.fuelLiters, editingFuelEntry, fuelRates]);
+  }, [fuelEditForm.state, fuelEditForm.fuelType, fuelEditForm.fuelLiters, fuelEditForm.fuelRate, editingFuelEntry, fuelRates]);
 
   useEffect(() => {
     if (selectedTripId) {

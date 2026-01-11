@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import syncService from '../utils/sync-service';
+import React, { useState } from 'react';
+import { useFTLLRBookings, usePTLLRBookings, usePODs } from '../hooks/useDataSync';
 
 const CreatePOD = () => {
-  const [bookings, setBookings] = useState([]);
+  const { data: ftlBookings, loading: ftlLoading } = useFTLLRBookings();
+  const { data: ptlBookings, loading: ptlLoading } = usePTLLRBookings();
+  const { create: createPOD } = usePODs();
+  
   const [formData, setFormData] = useState({
     lrNumber: '',
     podFile: null,
@@ -15,24 +18,11 @@ const CreatePOD = () => {
     remarks: '',
   });
   const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    loadBookings();
-  }, []);
-
-  const loadBookings = async () => {
-    try {
-      const ftlResult = await syncService.load('ftlLRBookings');
-      const ptlResult = await syncService.load('ptlLRBookings');
-      setBookings([...ftlResult.data, ...ptlResult.data]);
-    } catch (error) {
-      console.error('Error loading bookings:', error);
-      // Fallback to localStorage
-      const ftlBookings = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-      const ptlBookings = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-      setBookings([...ftlBookings, ...ptlBookings]);
-    }
-  };
+  // Combine bookings from both sources
+  const bookings = [...(ftlBookings || []), ...(ptlBookings || [])];
+  const loading = ftlLoading || ptlLoading;
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -73,57 +63,57 @@ const CreatePOD = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (validateForm()) {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const podData = {
-          id: Date.now().toString(),
-          lrNumber: formData.lrNumber,
-          podFile: reader.result,
-          podFileName: formData.podFileName,
-          idType: formData.idType || '',
-          idNumber: formData.idNumber || '',
-          mobileNumber: formData.mobileNumber || '',
-          vehicleNumber: formData.vehicleNumber || '',
-          deliveryDate: formData.deliveryDate || '',
-          remarks: formData.remarks || '',
-          createdAt: new Date().toISOString()
-        };
+    if (!validateForm()) return;
 
-        try {
-          // Save to API server and localStorage
-          const result = await syncService.save('pods', podData);
-          
-          if (result.synced) {
-            alert('POD created successfully and synced across all systems!');
-          } else {
-            alert('POD created successfully! (Saved locally - server may be unavailable)');
-          }
-
-          window.dispatchEvent(new CustomEvent('podCreated', { detail: podData }));
-          window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'pod', data: podData } }));
-          
-          setFormData({
-            lrNumber: '',
-            podFile: null,
-            podFileName: '',
-            idType: '',
-            idNumber: '',
-            mobileNumber: '',
-            vehicleNumber: '',
-            deliveryDate: '',
-            remarks: '',
-          });
-          const fileInput = document.querySelector('input[type="file"]');
-          if (fileInput) fileInput.value = '';
-        } catch (error) {
-          console.error('Error saving POD:', error);
-          alert('Error saving POD. Please try again.');
-        }
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const podData = {
+        lrNumber: formData.lrNumber,
+        podFile: reader.result,
+        podFileName: formData.podFileName,
+        idType: formData.idType || '',
+        idNumber: formData.idNumber || '',
+        mobileNumber: formData.mobileNumber || '',
+        vehicleNumber: formData.vehicleNumber || '',
+        deliveryDate: formData.deliveryDate || '',
+        remarks: formData.remarks || '',
+        createdAt: new Date().toISOString()
       };
-      reader.readAsDataURL(formData.podFile);
-    }
+
+      try {
+        setSaving(true);
+        await createPOD(podData);
+        alert('✅ POD created successfully on Render.com server!');
+
+        window.dispatchEvent(new CustomEvent('podCreated', { detail: podData }));
+        window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'pod', data: podData } }));
+        
+        setFormData({
+          lrNumber: '',
+          podFile: null,
+          podFileName: '',
+          idType: '',
+          idNumber: '',
+          mobileNumber: '',
+          vehicleNumber: '',
+          deliveryDate: '',
+          remarks: '',
+        });
+        const fileInput = document.querySelector('input[type="file"]');
+        if (fileInput) fileInput.value = '';
+      } catch (error) {
+        console.error('Error saving POD:', error);
+        alert('❌ Error saving POD: ' + error.message);
+      } finally {
+        setSaving(false);
+      }
+    };
+    reader.readAsDataURL(formData.podFile);
   };
+
+  if (loading) {
+    return <div style={{ maxWidth: '600px', margin: '20px auto', padding: '20px' }}>Loading bookings from Render.com...</div>;
+  }
 
   return (
     <div style={{ maxWidth: '600px', margin: '20px auto', padding: '20px' }}>
@@ -296,18 +286,20 @@ const CreatePOD = () => {
 
         <button
           type="submit"
+          disabled={saving}
           style={{
             width: '100%',
             padding: '10px',
-            backgroundColor: '#007bff',
+            backgroundColor: saving ? '#6c757d' : '#007bff',
             color: 'white',
             border: 'none',
             borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '16px'
+            cursor: saving ? 'not-allowed' : 'pointer',
+            fontSize: '16px',
+            opacity: saving ? 0.6 : 1
           }}
         >
-          Submit POD
+          {saving ? 'Saving...' : 'Submit POD'}
         </button>
       </form>
     </div>

@@ -47,20 +47,23 @@ export default function TransportManagementApp() {
   const [branches, setBranches] = useState([]);
   const [selectedBranch, setSelectedBranch] = useState(null);
 
-  // Load branches from server
+  // Load branches from server using hook (no localStorage fallback)
   const loadBranchesFromServer = async () => {
     try {
-      const result = await syncService.load('branches');
+      const response = await fetch('https://transport-management-system-wzhx.onrender.com/api/branches');
+      const result = await response.json();
       const activeBranches = (result.data || []).filter(b => b.status === 'Active' || !b.status);
       setBranches(activeBranches);
+      
+      // Clear localStorage to prevent conflicts
+      localStorage.removeItem('branches');
+      
       return activeBranches;
     } catch (error) {
       console.error('Error loading branches:', error);
-      // Fallback to localStorage
-      const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-      const activeBranches = allBranches.filter(b => b.status === 'Active');
-      setBranches(activeBranches);
-      return activeBranches;
+      // DO NOT fallback to localStorage - this causes browser-specific data
+      setBranches([]);
+      return [];
     }
   };
 

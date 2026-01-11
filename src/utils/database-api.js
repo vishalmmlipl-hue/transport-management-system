@@ -11,6 +11,11 @@ const getAPIBaseURL = () => {
   // 2. Check if running on production domain
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
+    // Use VPS API server for mmlipl.in (Hostinger VPS frontend)
+    if (hostname === 'mmlipl.in' || hostname === 'www.mmlipl.in' || hostname === 'www1.mmlipl.in') {
+      // Use VPS API server (backend is on same VPS)
+      return 'https://mmlipl.in/api';
+    }
     // Use Render API server for mmlipl.info (Netlify frontend)
     if (hostname === 'mmlipl.info' || hostname === 'www.mmlipl.info') {
       // Use Render API server (backend is on Render)
@@ -19,7 +24,7 @@ const getAPIBaseURL = () => {
     // Fallback to Render for other production domains (Netlify, etc.)
     if (hostname.includes('netlify.app') ||
         hostname.includes('vercel.app') ||
-        (!hostname.includes('localhost') && hostname !== 'mmlipl.info')) {
+        (!hostname.includes('localhost') && hostname !== 'mmlipl.info' && hostname !== 'mmlipl.in')) {
       // Use Render API server for other production domains
       return 'https://transport-management-system-wzhx.onrender.com/api';
     }

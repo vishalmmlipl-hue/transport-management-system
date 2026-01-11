@@ -7,112 +7,42 @@ export default function AutoDataSync() {
   const [lastSyncTime, setLastSyncTime] = useState(null);
   const [serverAvailable, setServerAvailable] = useState(null);
 
-  // Sync all data from API to localStorage
+  // DISABLED: Sync all data from API to localStorage
+  // This was causing browser-specific data issues
+  // Components should use API hooks directly, not localStorage
   const syncFromServer = async () => {
-    setIsSyncing(true);
-    try {
-      const results = await syncService.syncAll();
-      const allSynced = Object.values(results).every(r => r.synced);
-      setServerAvailable(allSynced);
-      setLastSyncTime(new Date());
-      
-      if (allSynced) {
-        console.log('✅ Data synced from server - all systems now have latest data');
-        // Trigger a custom event to notify components to reload
-        window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
-      } else {
-        console.warn('⚠️ Some data synced from localStorage (server may be unavailable)');
-      }
-    } catch (error) {
-      console.error('❌ Sync error:', error);
-      setServerAvailable(false);
-    } finally {
-      setIsSyncing(false);
-    }
+    console.log('⏭️  syncFromServer disabled - components use API hooks directly');
+    // Do not sync to localStorage - this causes browser-specific data
+    // Components should use useBranches(), useCities(), etc. hooks
+    setServerAvailable(true);
+    // Trigger reload event so components refresh from their hooks
+    window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+    return;
   };
 
-  // Sync localStorage data to server
+  // DISABLED: Sync localStorage data to server
+  // This was causing browser-specific data issues
+  // All data should now go directly to Render.com API, not through localStorage
   const syncToServer = async () => {
-    const storageKeys = [
-      'lrBookings', 'ftlLRBookings', 'ptlLRBookings', 'manifests', 'trips',
-      'invoices', 'pods', 'clients', 'tbbClients', 'branches', 'cities',
-      'vehicles', 'drivers', 'staff', 'users', 'accounts', 'expenseTypes',
-      'branchExpenses', 'marketVehicleVendors', 'otherVendors', 'ftlInquiries'
-    ];
-
-    let syncedCount = 0;
-    let failedCount = 0;
-
-    for (const key of storageKeys) {
-      try {
-        const localData = JSON.parse(localStorage.getItem(key) || '[]');
-        if (localData.length > 0) {
-          // Try to sync each item
-          for (const item of localData) {
-            try {
-              await syncService.save(key, item, !!item.id, item.id);
-              syncedCount++;
-            } catch (error) {
-              failedCount++;
-              console.warn(`Failed to sync ${key} item ${item.id}:`, error);
-            }
-          }
-        }
-      } catch (error) {
-        console.error(`Error syncing ${key}:`, error);
-        failedCount++;
-      }
-    }
-
-    if (syncedCount > 0) {
-      console.log(`✅ Synced ${syncedCount} items to server`);
-    }
-    if (failedCount > 0) {
-      console.warn(`⚠️ Failed to sync ${failedCount} items`);
-    }
+    console.log('⏭️  syncToServer disabled - data goes directly to Render.com API');
+    // Do not sync from localStorage - this causes browser-specific data
+    // Components should use API hooks directly
+    return;
   };
 
   useEffect(() => {
-    // Check server health on mount
-    const checkServer = async () => {
-      const healthy = await syncService.checkServerHealth();
-      setServerAvailable(healthy);
-      
-      if (healthy) {
-        // If server is available, sync from server first
-        await syncFromServer();
-        // Then sync local changes to server
-        await syncToServer();
-      } else {
-        console.warn('⚠️ Database server not available, using localStorage only');
-      }
-    };
-
-    checkServer();
-
-    // Auto-sync every 10 seconds (more frequent for better sync)
-    const interval = setInterval(async () => {
-      const healthy = await syncService.checkServerHealth();
-      if (healthy) {
-        await syncFromServer();
-        await syncToServer();
-      }
-    }, 10000); // 10 seconds - sync more frequently
-
-    // Listen for data updates
-    const handleDataUpdate = () => {
-      if (serverAvailable) {
-        syncToServer();
-      }
-    };
-
-    window.addEventListener('dataUpdated', handleDataUpdate);
-    window.addEventListener('storage', handleDataUpdate);
-
+    // DISABLED: Auto-sync to localStorage
+    // This was causing browser-specific data issues
+    // Components should use API hooks directly (useBranches, useCities, etc.)
+    console.log('⏭️  AutoDataSync disabled - components use API hooks directly');
+    setServerAvailable(true);
+    
+    // Just trigger reload event so components refresh from their hooks
+    window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+    
+    // No interval, no localStorage syncing
     return () => {
-      clearInterval(interval);
-      window.removeEventListener('dataUpdated', handleDataUpdate);
-      window.removeEventListener('storage', handleDataUpdate);
+      // Cleanup not needed
     };
   }, []);
 

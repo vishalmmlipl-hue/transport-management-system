@@ -791,7 +791,6 @@ export default function UserMasterForm() {
                       })
                       .map(user => {
                         const userBranch = branches.find(b => b.id.toString() === user.branch);
-                        const permissionCount = user.accessPermissions ? Object.values(user.accessPermissions).filter(p => p).length : 0;
                         
                         return (
                           <tr key={user.id} style={{

@@ -4,6 +4,7 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import './init-sample-data';
+import './utils/forceServerDataOnly'; // Clear localStorage on app load to prevent browser-specific data
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

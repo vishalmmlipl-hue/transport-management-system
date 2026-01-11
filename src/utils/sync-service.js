@@ -76,8 +76,9 @@ export const syncService = {
         if (hasIdentifier) {
           // API save successful - clean result without fallback flags
           console.log(`   ✅ Successfully saved ${storageKey} to server`);
-          // Also save to localStorage as backup
-          this.saveToLocalStorage(storageKey, data, isUpdate, id);
+          // DO NOT save to localStorage - this causes browser-specific data
+          // Clear localStorage instead to prevent conflicts
+          localStorage.removeItem(storageKey);
           return { success: true, data: apiResult, synced: true };
         } else {
           // Result doesn't look like valid data
@@ -134,8 +135,9 @@ export const syncService = {
       // Always try to get fresh data from API
       const apiData = await databaseAPI.getAll(tableName);
       if (apiData && !apiData.fallback && Array.isArray(apiData)) {
-        // Always update localStorage with fresh server data
-        localStorage.setItem(storageKey, JSON.stringify(apiData));
+        // DO NOT save to localStorage - this causes browser-specific data
+        // Clear localStorage instead to prevent conflicts
+        localStorage.removeItem(storageKey);
         return { data: apiData, synced: true };
       }
     } catch (error) {
@@ -151,7 +153,7 @@ export const syncService = {
   async syncAll() {
     const results = {};
     
-    for (const [storageKey, tableName] of Object.entries(STORAGE_TO_TABLE)) {
+    for (const [storageKey] of Object.entries(STORAGE_TO_TABLE)) {
       try {
         const result = await this.load(storageKey);
         results[storageKey] = result;

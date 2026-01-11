@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import syncService from '../utils/sync-service';
+import { useFTLLRBookings } from '../hooks/useDataSync';
 
 const FTLLRBooking = () => {
+  const { create: createFTLBooking } = useFTLLRBookings();
   const [formData, setFormData] = useState({
     lrNumber: '',
     lrReferenceNumber: '',
@@ -13,6 +14,7 @@ const FTLLRBooking = () => {
     branch: '',
   });
   const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -48,41 +50,37 @@ const FTLLRBooking = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (validateForm()) {
-      const bookingData = {
-        id: Date.now().toString(),
-        type: 'FTL',
-        ...formData,
-        createdAt: new Date().toISOString()
-      };
+    if (!validateForm()) return;
+
+    const bookingData = {
+      type: 'FTL',
+      ...formData,
+      createdAt: new Date().toISOString()
+    };
+    
+    try {
+      setSaving(true);
+      await createFTLBooking(bookingData);
+      alert('✅ FTL Booking saved to Render.com server!');
       
-      try {
-        // Save to API server and localStorage
-        const result = await syncService.save('ftlLRBookings', bookingData);
-        
-        if (result.synced) {
-          alert('FTL Booking submitted successfully and synced across all systems!');
-        } else {
-          alert('FTL Booking submitted successfully! (Saved locally - server may be unavailable)');
-        }
-        
-        window.dispatchEvent(new CustomEvent('lrBookingCreated', { detail: bookingData }));
-        window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'ftlBooking', data: bookingData } }));
-        
-        setFormData({
-          lrNumber: '',
-          lrReferenceNumber: '',
-          fromLocation: '',
-          toLocation: '',
-          invoiceNumber: '',
-          ewaybillNumber: '',
-          ewaybillDate: '',
-          branch: '',
-        });
-      } catch (error) {
-        console.error('Error saving FTL booking:', error);
-        alert('Error saving booking. Please try again.');
-      }
+      window.dispatchEvent(new CustomEvent('lrBookingCreated', { detail: bookingData }));
+      window.dispatchEvent(new CustomEvent('dataUpdated', { detail: { type: 'ftlBooking', data: bookingData } }));
+      
+      setFormData({
+        lrNumber: '',
+        lrReferenceNumber: '',
+        fromLocation: '',
+        toLocation: '',
+        invoiceNumber: '',
+        ewaybillNumber: '',
+        ewaybillDate: '',
+        branch: '',
+      });
+    } catch (error) {
+      console.error('Error saving FTL booking:', error);
+      alert('❌ Error saving booking: ' + error.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -252,18 +250,20 @@ const FTLLRBooking = () => {
 
         <button
           type="submit"
+          disabled={saving}
           style={{
             width: '100%',
             padding: '10px',
-            backgroundColor: '#007bff',
+            backgroundColor: saving ? '#6c757d' : '#007bff',
             color: 'white',
             border: 'none',
             borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '16px'
+            cursor: saving ? 'not-allowed' : 'pointer',
+            fontSize: '16px',
+            opacity: saving ? 0.6 : 1
           }}
         >
-          Submit Booking
+          {saving ? 'Saving...' : 'Submit Booking'}
         </button>
       </form>
     </div>
