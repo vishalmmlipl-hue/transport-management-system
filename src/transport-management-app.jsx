@@ -94,11 +94,17 @@ export default function TransportManagementApp() {
       
       // Load branches from server first, then set selected branch
       loadBranchesFromServer().then((loadedBranches) => {
+        // Safety check: ensure loadedBranches is an array
+        if (!Array.isArray(loadedBranches)) {
+          console.warn('Loaded branches is not an array:', loadedBranches);
+          return;
+        }
+        
         // For admin: load selected branch from localStorage or use first branch
         if (userData.role === 'Admin' || userData.role === 'admin') {
           const savedBranchId = localStorage.getItem('adminSelectedBranch');
           if (savedBranchId && loadedBranches.length > 0) {
-            const branch = loadedBranches.find(b => b.id && b.id.toString() === savedBranchId);
+            const branch = loadedBranches.find(b => b && b.id && String(b.id) === String(savedBranchId));
             if (branch) {
               setSelectedBranch(branch);
               // Update currentUser branch for context
@@ -116,7 +122,7 @@ export default function TransportManagementApp() {
         } else {
           // For non-admin: use their assigned branch
           if (userData.branch && loadedBranches.length > 0) {
-            const branch = loadedBranches.find(b => b.id && b.id.toString() === String(userData.branch));
+            const branch = loadedBranches.find(b => b && b.id && String(b.id) === String(userData.branch));
             if (branch) {
               setSelectedBranch(branch);
             }
@@ -332,7 +338,7 @@ export default function TransportManagementApp() {
       localStorage.setItem('currentUser', JSON.stringify(updatedUser));
       localStorage.removeItem('adminSelectedBranch');
     } else {
-      const branch = branches.find(b => b.id && b.id.toString() === String(branchId));
+      const branch = branches.find(b => b && b.id && String(b.id) === String(branchId));
       if (branch) {
         setSelectedBranch(branch);
         const updatedUser = { ...currentUser, branch: branch.id };
@@ -893,7 +899,7 @@ export default function TransportManagementApp() {
                   {(() => {
                     // Use branches from state (loaded from server), not localStorage
                     if (currentUser.branch && branches.length > 0) {
-                      const branch = branches.find(b => b.id && b.id.toString() === String(currentUser.branch));
+                      const branch = branches.find(b => b && b.id && String(b.id) === String(currentUser.branch));
                       return branch ? `${branch.branchName} - ${branch.address?.city || branch.city || ''}` : 'N/A';
                     }
                     return 'N/A';

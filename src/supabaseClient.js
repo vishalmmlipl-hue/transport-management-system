@@ -3,6 +3,7 @@
  * 
  * This app uses Render.com API, not Supabase.
  * This file is kept for compatibility but does nothing.
+ * NO CONSOLE LOGS - completely silent
  */
 
 // Disable Supabase - app uses Render.com API
@@ -20,5 +21,5 @@ export const supabase = {
   }),
 };
 
-// No warning - silently disabled
-// Don't log anything - this is expected behavior
+// COMPLETELY SILENT - No warnings, no logs, nothing
+// This file is disabled and should not output anything
