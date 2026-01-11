@@ -93,42 +93,47 @@ export default function TransportManagementApp() {
       setCurrentUser(userData);
       
       // Load branches from server first, then set selected branch
-      loadBranchesFromServer().then((loadedBranches) => {
-        // Safety check: ensure loadedBranches is an array
-        if (!Array.isArray(loadedBranches)) {
-          console.warn('Loaded branches is not an array:', loadedBranches);
-          return;
-        }
-        
-        // For admin: load selected branch from localStorage or use first branch
-        if (userData.role === 'Admin' || userData.role === 'admin') {
-          const savedBranchId = localStorage.getItem('adminSelectedBranch');
-          if (savedBranchId && loadedBranches.length > 0) {
-            const branch = loadedBranches.find(b => b && b.id && String(b.id) === String(savedBranchId));
-            if (branch) {
-              setSelectedBranch(branch);
-              // Update currentUser branch for context
-              const updatedUser = { ...userData, branch: branch.id };
+      loadBranchesFromServer()
+        .then((loadedBranches) => {
+          // Safety check: ensure loadedBranches is an array
+          if (!Array.isArray(loadedBranches)) {
+            console.warn('Loaded branches is not an array:', loadedBranches);
+            return;
+          }
+          
+          // For admin: load selected branch from localStorage or use first branch
+          if (userData.role === 'Admin' || userData.role === 'admin') {
+            const savedBranchId = localStorage.getItem('adminSelectedBranch');
+            if (savedBranchId && loadedBranches.length > 0) {
+              const branch = loadedBranches.find(b => b && b.id && String(b.id) === String(savedBranchId));
+              if (branch) {
+                setSelectedBranch(branch);
+                // Update currentUser branch for context
+                const updatedUser = { ...userData, branch: branch.id };
+                setCurrentUser(updatedUser);
+                localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+              }
+            } else if (loadedBranches.length > 0 && loadedBranches[0] && loadedBranches[0].id) {
+              setSelectedBranch(loadedBranches[0]);
+              const updatedUser = { ...userData, branch: loadedBranches[0].id };
               setCurrentUser(updatedUser);
               localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+              localStorage.setItem('adminSelectedBranch', String(loadedBranches[0].id));
             }
-          } else if (loadedBranches.length > 0 && loadedBranches[0].id) {
-            setSelectedBranch(loadedBranches[0]);
-            const updatedUser = { ...userData, branch: loadedBranches[0].id };
-            setCurrentUser(updatedUser);
-            localStorage.setItem('currentUser', JSON.stringify(updatedUser));
-            localStorage.setItem('adminSelectedBranch', loadedBranches[0].id.toString());
-          }
-        } else {
-          // For non-admin: use their assigned branch
-          if (userData.branch && loadedBranches.length > 0) {
-            const branch = loadedBranches.find(b => b && b.id && String(b.id) === String(userData.branch));
-            if (branch) {
-              setSelectedBranch(branch);
+          } else {
+            // For non-admin: use their assigned branch
+            if (userData.branch && loadedBranches.length > 0) {
+              const branch = loadedBranches.find(b => b && b.id && String(b.id) === String(userData.branch));
+              if (branch) {
+                setSelectedBranch(branch);
+              }
             }
           }
-        }
-      });
+        })
+        .catch((error) => {
+          console.error('Error loading branches:', error);
+          // Don't crash the app - just log the error
+        });
     }
 
     // Listen for navigation events from child components

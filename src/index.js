@@ -5,7 +5,10 @@ import App from './App';
 import reportWebVitals from './reportWebVitals';
 import './init-sample-data';
 import './utils/forceServerDataOnly'; // Clear localStorage on app load to prevent browser-specific data
-import './utils/autoSyncToServer'; // Auto-sync localStorage data to Render.com server
+
+// Auto-sync localStorage to server (disabled temporarily to prevent blank page)
+// TODO: Re-enable after confirming app loads correctly
+// import './utils/autoSyncToServer';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
