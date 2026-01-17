@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { FileText, Users, MapPin, Truck, Package, UserCheck, Briefcase, Building2, UserCog, ClipboardList, CheckCircle, Receipt, DollarSign, BarChart, LogOut, User, Menu, X, Home, Settings, ChevronRight, TrendingUp, BookOpen, Hash, PackageCheck, Database, Edit2, Wallet } from 'lucide-react';
 import initSampleData from './init-sample-data';
 import AutoDataSync from './components/AutoDataSync';
 import syncService from './utils/sync-service';
+import apiService from './utils/apiService';
 
 import LoginForm from './login-form.jsx';
 import ClientMasterForm from './client-master-form.jsx';
@@ -49,6 +50,119 @@ export default function TransportManagementApp() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [branches, setBranches] = useState([]);
   const [selectedBranch, setSelectedBranch] = useState(null);
+  const [dashboardStats, setDashboardStats] = useState({
+    loading: true,
+    error: null,
+    totalLRs: 0,
+    activeTrips: 0,
+    pendingInvoices: 0,
+    activeVehicles: 0,
+  });
+
+  const getActiveBranchIdForStats = useCallback(() => {
+    // Admin: selectedBranch null means "All Branches"
+    if (selectedBranch && selectedBranch.id != null) return String(selectedBranch.id);
+    // Non-admin: use assigned branch
+    if (currentUser?.branch != null) return String(currentUser.branch);
+    return null;
+  }, [selectedBranch, currentUser]);
+
+  const loadDashboardStats = useCallback(async () => {
+    if (!isLoggedIn) return;
+
+    try {
+      setDashboardStats(prev => ({ ...prev, loading: true, error: null }));
+
+      const branchId = getActiveBranchIdForStats();
+
+      const [
+        baseLRs,
+        ptlLRs,
+        ftlLRs,
+        trips,
+        invoices,
+        vehicles,
+      ] = await Promise.all([
+        apiService.getLRBookings().catch(() => []),
+        apiService.getPTLLRBookings().catch(() => []),
+        apiService.getFTLLRBookings().catch(() => []),
+        apiService.getTrips().catch(() => []),
+        apiService.getInvoices().catch(() => []),
+        apiService.getVehicles().catch(() => []),
+      ]);
+
+      // De-duplicate LRs across tables (some environments alias PTL to lrBookings)
+      const lrMap = new Map();
+      [...(baseLRs || []), ...(ptlLRs || []), ...(ftlLRs || [])].forEach(lr => {
+        if (!lr) return;
+        const key = lr.lrNumber != null ? String(lr.lrNumber) : `id:${String(lr.id ?? '')}`;
+        if (!lrMap.has(key)) lrMap.set(key, lr);
+      });
+
+      let lrList = Array.from(lrMap.values());
+      if (branchId) {
+        lrList = lrList.filter(lr => String(lr.branch ?? '') === String(branchId));
+      }
+
+      let tripList = Array.isArray(trips) ? trips : [];
+      if (branchId) {
+        // Only filter if trip has a branch field (otherwise keep global)
+        const hasBranchField = tripList.some(t => t && t.branch != null);
+        if (hasBranchField) {
+          tripList = tripList.filter(t => String(t.branch ?? '') === String(branchId));
+        }
+      }
+
+      let invoiceList = Array.isArray(invoices) ? invoices : [];
+      if (branchId) {
+        const hasBranchField = invoiceList.some(i => i && i.branch != null);
+        if (hasBranchField) {
+          invoiceList = invoiceList.filter(i => String(i.branch ?? '') === String(branchId));
+        }
+      }
+
+      let vehicleList = Array.isArray(vehicles) ? vehicles : [];
+      if (branchId) {
+        const hasBranchField = vehicleList.some(v => v && v.branch != null);
+        if (hasBranchField) {
+          vehicleList = vehicleList.filter(v => String(v.branch ?? '') === String(branchId));
+        }
+      }
+
+      setDashboardStats({
+        loading: false,
+        error: null,
+        totalLRs: lrList.length,
+        activeTrips: tripList.filter(t => t?.status === 'In Progress').length,
+        pendingInvoices: invoiceList.filter(i => i?.status === 'Pending').length,
+        activeVehicles: vehicleList.filter(v => v?.status === 'Active').length,
+      });
+    } catch (e) {
+      setDashboardStats({
+        loading: false,
+        error: e?.message || 'Failed to load dashboard stats',
+        totalLRs: 0,
+        activeTrips: 0,
+        pendingInvoices: 0,
+        activeVehicles: 0,
+      });
+    }
+  }, [isLoggedIn, getActiveBranchIdForStats]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    loadDashboardStats();
+
+    const handler = () => loadDashboardStats();
+    window.addEventListener('dataUpdated', handler);
+    window.addEventListener('dataSyncedFromServer', handler);
+    window.addEventListener('adminBranchChanged', handler);
+    return () => {
+      window.removeEventListener('dataUpdated', handler);
+      window.removeEventListener('dataSyncedFromServer', handler);
+      window.removeEventListener('adminBranchChanged', handler);
+    };
+  }, [isLoggedIn, loadDashboardStats]);
 
   // Load branches from server (syncService) and keep localStorage in sync
   const loadBranchesFromServer = async () => {
@@ -985,22 +1099,22 @@ export default function TransportManagementApp() {
         <div className="quick-stats">
           <div className="stat-card">
             <FileText size={48} className="stat-icon" style={{ color: '#3b82f6' }} />
-            <div className="stat-value">{JSON.parse(localStorage.getItem('lrBookings') || '[]').length}</div>
+            <div className="stat-value">{dashboardStats.loading ? '…' : dashboardStats.totalLRs}</div>
             <div className="stat-label">Total LRs</div>
           </div>
           <div className="stat-card">
             <Truck size={48} className="stat-icon" style={{ color: '#8b5cf6' }} />
-            <div className="stat-value">{JSON.parse(localStorage.getItem('trips') || '[]').filter(t => t.status === 'In Progress').length}</div>
+            <div className="stat-value">{dashboardStats.loading ? '…' : dashboardStats.activeTrips}</div>
             <div className="stat-label">Active Trips</div>
           </div>
           <div className="stat-card">
             <Receipt size={48} className="stat-icon" style={{ color: '#f59e0b' }} />
-            <div className="stat-value">{JSON.parse(localStorage.getItem('invoices') || '[]').filter(i => i.status === 'Pending').length}</div>
+            <div className="stat-value">{dashboardStats.loading ? '…' : dashboardStats.pendingInvoices}</div>
             <div className="stat-label">Pending Invoices</div>
           </div>
           <div className="stat-card">
             <TrendingUp size={48} className="stat-icon" style={{ color: '#10b981' }} />
-            <div className="stat-value">{JSON.parse(localStorage.getItem('vehicles') || '[]').filter(v => v.status === 'Active').length}</div>
+            <div className="stat-value">{dashboardStats.loading ? '…' : dashboardStats.activeVehicles}</div>
             <div className="stat-label">Active Vehicles</div>
           </div>
         </div>
