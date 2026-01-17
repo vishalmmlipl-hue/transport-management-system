@@ -5001,6 +5001,8 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
       ['Printed At', new Date().toLocaleString()],
     ];
 
+    const tripDetailsRows = headerRows.filter(([k]) => !['Trip Number', 'Printed At'].includes(k));
+
     const html = `<!doctype html>
 <html>
 <head>
@@ -5020,52 +5022,88 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
     .right { text-align: right; }
     .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
     .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+    .badge-green { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+    .badge-amber { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; }
     @media print { .no-print { display: none; } body { padding: 0; } }
   </style>
 </head>
 <body>
   <div class="header">
     <img class="logo" src="${escapeHtml(logoUrl)}" alt="Company Logo" onerror="this.onerror=null;this.src='${escapeHtml(fallbackLogoUrl)}';" />
-    <h1>Trip Expense Details</h1>
+    <h1>Trip Management - Finalize & Expense Print</h1>
   </div>
-  <div class="muted">Includes payments (advance), fuel entries, other expenses, and matrix expenses (salary/bhatta/second driver).</div>
+  <div class="muted">Print format matches the Trip Finalize flow (Fuel → Advance → Other → Matrix → Final Summary).</div>
 
-  <h2>Trip Details</h2>
+  <h2>1) Trip Number</h2>
   <table>
     <tbody>
-      ${headerRows.map(([k, v]) => `<tr><th style="width:180px">${escapeHtml(k)}</th><td>${escapeHtml(v || 'N/A')}</td></tr>`).join('')}
+      <tr>
+        <th style="width:180px">Trip Number</th>
+        <td>
+          <strong>${escapeHtml(selectedTrip.tripNumber || '')}</strong>
+          ${isFinalizedLocal ? ` <span class="badge badge-green">FINALIZED</span>` : ` <span class="badge badge-amber">NOT FINALIZED</span>`}
+        </td>
+      </tr>
+      <tr><th>Status</th><td>${escapeHtml(selectedTrip.status || 'N/A')}</td></tr>
+      <tr><th>Printed At</th><td>${escapeHtml(new Date().toLocaleString())}</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2) Trip Details</h2>
+  <table>
+    <tbody>
+      ${tripDetailsRows.map(([k, v]) => `<tr><th style="width:180px">${escapeHtml(k)}</th><td>${escapeHtml(v || 'N/A')}</td></tr>`).join('')}
       ${tripRemarks ? `<tr><th>Remarks</th><td>${escapeHtml(tripRemarks)}</td></tr>` : ''}
     </tbody>
   </table>
 
+  <h2>3) Fuel Issued</h2>
   <div class="summary">
-    <div class="card"><strong>Total Advance</strong><div>₹ ${escapeHtml(totalAdvanceAmount.toFixed(2))}</div></div>
-    <div class="card"><strong>Total Fuel</strong><div>${escapeHtml(totalFuelLiters.toFixed(2))} L • ₹ ${escapeHtml(totalFuelAmount.toFixed(2))}</div></div>
-    <div class="card"><strong>Total Other Expenses</strong><div>₹ ${escapeHtml(totalOtherAmount.toFixed(2))}</div></div>
-    <div class="card"><strong>Matrix Total (Bhatta+Salary+Second Driver)</strong><div>₹ ${escapeHtml(matrixTotalPrint.toFixed(2))}</div></div>
-    <div class="card"><strong>Total Trip Cost</strong><div>₹ ${escapeHtml(totalTripCost.toFixed(2))}</div></div>
+    <div class="card"><strong>Initial Fuel Issued</strong><div>${escapeHtml(initialFuelIssued.toFixed(2))} Liters</div></div>
+    <div class="card"><strong>Fuel Entries</strong><div>${escapeHtml(totalFuelLitersEntries.toFixed(2))} Liters (${escapeHtml(String((fuelEntries || []).length))} entries)</div></div>
+    <div class="card"><strong>Total Fuel Issued</strong><div>${escapeHtml(totalFuelLiters.toFixed(2))} Liters</div></div>
+    <div class="card"><strong>Total Fuel Amount</strong><div>₹ ${escapeHtml(totalFuelAmount.toFixed(2))}</div></div>
   </div>
 
-  <h2>Fuel Average & Driver Balance Calculations</h2>
+  <h2>⛽ Fuel Entries</h2>
   <table>
+    <thead>
+      <tr>
+        <th style="width:110px">Date</th>
+        <th style="width:80px">State</th>
+        <th style="width:70px">Type</th>
+        <th style="width:80px" class="right">Liters</th>
+        <th style="width:90px" class="right">Rate</th>
+        <th style="width:110px" class="right">Amount</th>
+        <th style="width:170px">Vendor</th>
+        <th>Description</th>
+      </tr>
+    </thead>
     <tbody>
-      <tr><th style="width:220px">Total KM</th><td>${escapeHtml(km.toFixed(2))}</td></tr>
-      <tr><th>Desired Average (KM/L)</th><td>${escapeHtml(desired.toFixed(2))}</td></tr>
-      <tr><th>Actual Average (KM/L)</th><td>${escapeHtml(actualAvg.toFixed(2))}</td></tr>
-      <tr><th>Total Fuel Issued (L)</th><td>${escapeHtml(totalFuelLiters.toFixed(2))}</td></tr>
-      <tr><th>Expected Consumption (L)</th><td>${escapeHtml(expectedFuel.toFixed(2))}</td></tr>
-      <tr><th>Fuel Difference (Issued − Expected) (L)</th><td>${escapeHtml(extraFuelLiters.toFixed(2))}</td></tr>
-      <tr><th>MP Diesel Rate (₹/L)</th><td>${escapeHtml(mpRate.toFixed(2))}</td></tr>
-      <tr><th>Extra Fuel Amount (₹)</th><td>${escapeHtml(extraFuelAmount.toFixed(2))}</td></tr>
-      <tr><th>Total Fuel Amount (₹)</th><td>${escapeHtml(totalFuelAmount.toFixed(2))}</td></tr>
-      <tr><th>Total Other Expenses (List + Matrix) (₹)</th><td>${escapeHtml(totalOtherExpensesAll.toFixed(2))}</td></tr>
-      <tr><th>Total Trip Cost (Fuel + Other) (₹)</th><td>${escapeHtml(totalTripCost.toFixed(2))}</td></tr>
-      <tr><th>Driver Balance Type</th><td>${escapeHtml(driverBalanceType)}</td></tr>
-      <tr><th>Driver Balance (₹)</th><td>${escapeHtml(driverBalance.toFixed(2))}</td></tr>
+      ${(fuelEntries || []).length ? (fuelEntries || []).map(e => `
+        <tr>
+          <td>${escapeHtml(formatDateDDMMYYYY(e?.fuelDate))}</td>
+          <td>${escapeHtml(e?.state || '')}</td>
+          <td>${escapeHtml(e?.fuelType || '')}</td>
+          <td class="right">${escapeHtml((parseFloat(e?.fuelLiters) || 0).toFixed(2))}</td>
+          <td class="right">${escapeHtml((parseFloat(e?.fuelRate) || 0).toFixed(2))}</td>
+          <td class="right">${escapeHtml((parseFloat(e?.fuelAmount) || 0).toFixed(2))}</td>
+          <td>${escapeHtml(getFuelVendorLabel(e?.fuelVendor))}</td>
+          <td>${escapeHtml(e?.description || e?.remarks || '')}</td>
+        </tr>
+      `).join('') : `<tr><td colspan="8" class="muted">No fuel entries</td></tr>`}
     </tbody>
   </table>
 
-  <h2>Advance / Payments</h2>
+  <h2>4) Advance</h2>
+  <div class="summary">
+    <div class="card"><strong>Initial Advance</strong><div>₹ ${escapeHtml(initialAdvancePaid.toFixed(2))}</div></div>
+    <div class="card"><strong>Advance Entries</strong><div>₹ ${escapeHtml(totalAdvanceAmountEntries.toFixed(2))} (${escapeHtml(String((advanceEntries || []).length))} entries)</div></div>
+    <div class="card"><strong>Total Advance</strong><div>₹ ${escapeHtml(totalAdvanceAmount.toFixed(2))}</div></div>
+  </div>
+
+  <h2>💰 Advance Entries</h2>
   <table>
     <thead>
       <tr>
@@ -5087,37 +5125,10 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
     </tbody>
   </table>
 
-  <h2>Fuel Entries</h2>
-  <table>
-    <thead>
-      <tr>
-        <th style="width:110px">Date</th>
-        <th style="width:80px">State</th>
-        <th style="width:70px">Type</th>
-        <th style="width:80px" class="right">Liters</th>
-        <th style="width:90px" class="right">Rate</th>
-        <th style="width:110px" class="right">Amount</th>
-        <th style="width:170px">Vendor</th>
-        <th>Narration / Remark</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${(fuelEntries || []).length ? (fuelEntries || []).map(e => `
-        <tr>
-          <td>${escapeHtml(formatDateDDMMYYYY(e?.fuelDate))}</td>
-          <td>${escapeHtml(e?.state || '')}</td>
-          <td>${escapeHtml(e?.fuelType || '')}</td>
-          <td class="right">${escapeHtml((parseFloat(e?.fuelLiters) || 0).toFixed(2))}</td>
-          <td class="right">${escapeHtml((parseFloat(e?.fuelRate) || 0).toFixed(2))}</td>
-          <td class="right">${escapeHtml((parseFloat(e?.fuelAmount) || 0).toFixed(2))}</td>
-          <td>${escapeHtml(getFuelVendorLabel(e?.fuelVendor))}</td>
-          <td>${escapeHtml(e?.description || e?.remarks || '')}</td>
-        </tr>
-      `).join('') : `<tr><td colspan="8" class="muted">No fuel entries</td></tr>`}
-    </tbody>
-  </table>
-
-  <h2>Other Expenses</h2>
+  <h2>5) Other Expenses List</h2>
+  <div class="summary">
+    <div class="card"><strong>Total Other Expenses</strong><div>₹ ${escapeHtml(totalOtherAmount.toFixed(2))}</div><div class="muted">${escapeHtml(String((otherExp || []).length))} entries</div></div>
+  </div>
   <table>
     <thead>
       <tr>
@@ -5143,7 +5154,10 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
     </tbody>
   </table>
 
-  <h2>Matrix Expenses</h2>
+  <h2>6) Other Expenses Matrix</h2>
+  <div class="summary">
+    <div class="card"><strong>Matrix Total (Bhatta + Salary + Second Driver)</strong><div>₹ ${escapeHtml(matrixTotalPrint.toFixed(2))}</div></div>
+  </div>
   <table>
     <thead>
       <tr>
@@ -5164,6 +5178,21 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
       `).join('')}
     </tbody>
   </table>
+
+  <h2>Finalized Trip Summary</h2>
+  <div class="summary">
+    <div class="card"><strong>Total KM</strong><div>${escapeHtml(km.toFixed(2))}</div></div>
+    <div class="card"><strong>Desired Average</strong><div>${escapeHtml(desired.toFixed(2))} KM/L</div></div>
+    <div class="card"><strong>Actual Average</strong><div>${escapeHtml(actualAvg.toFixed(2))} KM/L</div></div>
+    <div class="card"><strong>Fuel Issued</strong><div>${escapeHtml(totalFuelLiters.toFixed(2))} Liters</div></div>
+    <div class="card"><strong>Expected Consumption</strong><div>${escapeHtml(expectedFuel.toFixed(2))} Liters</div></div>
+    <div class="card"><strong>Fuel Difference</strong><div>${escapeHtml(extraFuelLiters.toFixed(2))} Liters</div></div>
+    <div class="card"><strong>MP Diesel Rate</strong><div>₹ ${escapeHtml(mpRate.toFixed(2))}/L</div></div>
+    <div class="card"><strong>Extra Fuel Amount</strong><div>₹ ${escapeHtml(extraFuelAmount.toFixed(2))}</div></div>
+    <div class="card"><strong>Total Other Expenses (List + Matrix)</strong><div>₹ ${escapeHtml(totalOtherExpensesAll.toFixed(2))}</div></div>
+    <div class="card"><strong>Total Trip Cost</strong><div>₹ ${escapeHtml(totalTripCost.toFixed(2))}</div><div class="muted">Fuel Amount + Other Expenses</div></div>
+    <div class="card"><strong>Driver Balance</strong><div>${escapeHtml(driverBalanceType)} • ₹ ${escapeHtml(Math.abs(driverBalance).toFixed(2))}</div></div>
+  </div>
 
   <div class="no-print muted" style="margin-top:12px">Tip: Use browser print settings to select A4 and “Background graphics” if needed.</div>
   <script>
