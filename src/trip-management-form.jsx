@@ -702,6 +702,16 @@ export default function TripManagementForm() {
       
       // Filter trip data - only send basic schema fields, store rest in data column
       const filterTripData = (tripData) => {
+        const normalizeId = (v) => {
+          if (v === null || v === undefined) return '';
+          if (typeof v === 'object') {
+            if (v.id !== undefined && v.id !== null) return String(v.id);
+            if (v.value !== undefined && v.value !== null) return String(v.value);
+            return '';
+          }
+          return String(v);
+        };
+
         // Only these basic fields should be direct columns in the database
         // tripType and vehicleType are required (NOT NULL) so they must be direct columns
         // For CREATE we should NOT send id (server DB should assign it)
@@ -752,7 +762,12 @@ export default function TripManagementForm() {
             // Store everything else in data column
             if (fieldsToStoreInData.includes(key) || 
                 (typeof tripData[key] === 'object' && tripData[key] !== null && !Array.isArray(tripData[key]) && !(tripData[key] instanceof Date) && !(tripData[key] instanceof String))) {
-              dataColumn[key] = tripData[key];
+              // Normalize common "id-ish" fields to avoid storing whole objects
+              if (['ownedVehicle', 'ownedDriver', 'secondDriver', 'parentTripId', 'selectedManifest', 'origin', 'destination', 'originBranch', 'vendor'].includes(key)) {
+                dataColumn[key] = normalizeId(tripData[key]);
+              } else {
+                dataColumn[key] = tripData[key];
+              }
             } else {
               // Even simple fields that aren't in the basic schema go to data column
               dataColumn[key] = tripData[key];
@@ -1272,8 +1287,21 @@ export default function TripManagementForm() {
   };
 
   const getDriverDetails = (driverId) => {
-    const driver = drivers.find(d => d.id.toString() === driverId);
-    if (!driver) return 'N/A';
+    if (driverId === null || driverId === undefined || driverId === '') return 'N/A';
+    const id = typeof driverId === 'object'
+      ? (driverId.id != null ? String(driverId.id) : '')
+      : String(driverId);
+    if (!id && typeof driverId === 'object' && driverId.driverName) {
+      return driverId.driverName;
+    }
+    const driver = drivers.find(d => d.id?.toString() === id);
+    if (!driver) {
+      // Backward-compatible fallback if trip stored name instead of id
+      if (typeof driverId === 'string' && driverId.trim() && !/^\d+$/.test(driverId.trim())) {
+        return driverId.trim();
+      }
+      return 'N/A';
+    }
     const nameDisplay = driver.nickName ? `${driver.driverName} (${driver.nickName})` : driver.driverName;
     return `${nameDisplay} (${driver.licenseNumber || driver.mobile || 'No License'})`;
   };
@@ -2958,9 +2986,20 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
 
   // Helper function to get driver details
   const getDriverDetails = (driverId) => {
-    if (!driverId) return 'N/A';
-    const driver = drivers.find(d => d.id?.toString() === driverId.toString());
-    if (!driver) return 'N/A';
+    if (driverId === null || driverId === undefined || driverId === '') return 'N/A';
+    const id = typeof driverId === 'object'
+      ? (driverId.id != null ? String(driverId.id) : '')
+      : String(driverId);
+    if (!id && typeof driverId === 'object' && driverId.driverName) {
+      return driverId.driverName;
+    }
+    const driver = drivers.find(d => d.id?.toString() === id);
+    if (!driver) {
+      if (typeof driverId === 'string' && driverId.trim() && !/^\d+$/.test(driverId.trim())) {
+        return driverId.trim();
+      }
+      return 'N/A';
+    }
     const nameDisplay = driver.nickName ? `${driver.driverName} (${driver.nickName})` : driver.driverName;
     return `${nameDisplay} (${driver.licenseNumber || driver.mobile || 'No License'})`;
   };
@@ -4059,9 +4098,20 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
 
   // Helper function to get driver details
   const getDriverDetails = (driverId) => {
-    if (!driverId) return 'N/A';
-    const driver = drivers.find(d => d.id?.toString() === driverId.toString());
-    if (!driver) return 'N/A';
+    if (driverId === null || driverId === undefined || driverId === '') return 'N/A';
+    const id = typeof driverId === 'object'
+      ? (driverId.id != null ? String(driverId.id) : '')
+      : String(driverId);
+    if (!id && typeof driverId === 'object' && driverId.driverName) {
+      return driverId.driverName;
+    }
+    const driver = drivers.find(d => d.id?.toString() === id);
+    if (!driver) {
+      if (typeof driverId === 'string' && driverId.trim() && !/^\d+$/.test(driverId.trim())) {
+        return driverId.trim();
+      }
+      return 'N/A';
+    }
     const nameDisplay = driver.nickName ? `${driver.driverName} (${driver.nickName})` : driver.driverName;
     return `${nameDisplay} (${driver.licenseNumber || driver.mobile || 'No License'})`;
   };
@@ -5752,29 +5802,40 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
           {/* Other Expenses List */}
           <div>
             <h4 style={{ marginBottom: '15px' }}>5) Other Expenses List</h4>
-            {(otherExpenses || []).length === 0 ? (
-              <p style={{ color: '#666', fontStyle: 'italic', padding: '20px', textAlign: 'center', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
-                No other expenses added for this trip yet
-              </p>
-            ) : (
-              <>
-                <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
-                    <thead>
-                      <tr style={{ backgroundColor: '#8b5cf6', color: 'white' }}>
-                        <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Date</th>
-                        <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Type</th>
-                        <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Description</th>
-                        <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Amount (₹)</th>
-                        <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Paid To</th>
-                        {!isFinalized && (
-                          <th style={{ padding: '12px', textAlign: 'center', border: '1px solid #7c3aed' }}>Actions</th>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(otherExpenses || []).map(expense => (
-                        <tr key={expense.id} style={{ borderBottom: '1px solid #ddd' }}>
+            <div style={{ overflowX: 'auto', marginBottom: '20px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#8b5cf6', color: 'white' }}>
+                    <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Date</th>
+                    <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Type</th>
+                    <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Description</th>
+                    <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Amount (₹)</th>
+                    <th style={{ padding: '12px', textAlign: 'left', border: '1px solid #7c3aed' }}>Paid To</th>
+                    {!isFinalized && (
+                      <th style={{ padding: '12px', textAlign: 'center', border: '1px solid #7c3aed' }}>Actions</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(otherExpenses || []).length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={isFinalized ? 5 : 6}
+                        style={{
+                          padding: '16px',
+                          border: '1px solid #ddd',
+                          textAlign: 'center',
+                          color: '#666',
+                          fontStyle: 'italic',
+                          backgroundColor: '#f8f9fa'
+                        }}
+                      >
+                        No other expenses added for this trip yet
+                      </td>
+                    </tr>
+                  ) : (
+                    (otherExpenses || []).map(expense => (
+                      <tr key={expense.id} style={{ borderBottom: '1px solid #ddd' }}>
                           {editingExpense === expense.id ? (
                             <>
                               <td style={{ padding: '10px', border: '1px solid #ddd' }}>
@@ -5890,36 +5951,37 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
                             </>
                           )}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-                <div style={{ 
-                  padding: '20px', 
-                  backgroundColor: '#f8f9fa', 
-                  borderRadius: '8px',
-                  border: '2px solid #8b5cf6',
-                  marginBottom: '20px'
-                }}>
-                  <h4 style={{ marginTop: 0, marginBottom: '15px' }}>Other Expenses Summary</h4>
-                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#8b5cf6' }}>
-                    Total Other Expenses: ₹{totalOtherExpenses.toFixed(2)}
-                  </div>
-                  <div style={{ fontSize: '14px', color: '#666', marginTop: '5px' }}>
-                    {(otherExpenses || []).length} expense entries
-                  </div>
-                </div>
+            <div style={{ 
+              padding: '20px', 
+              backgroundColor: '#f8f9fa', 
+              borderRadius: '8px',
+              border: '2px solid #8b5cf6',
+              marginBottom: '20px'
+            }}>
+              <h4 style={{ marginTop: 0, marginBottom: '15px' }}>Other Expenses Summary</h4>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#8b5cf6' }}>
+                Total Other Expenses: ₹{totalOtherExpenses.toFixed(2)}
+              </div>
+              <div style={{ fontSize: '14px', color: '#666', marginTop: '5px' }}>
+                {(otherExpenses || []).length} expense entries
+              </div>
+            </div>
 
-                {/* 5) Other Expenses Matrix */}
-                <div style={{ 
-                  marginBottom: '20px', 
-                  padding: '20px', 
-                  backgroundColor: '#fff', 
-                  borderRadius: '8px',
-                  border: '1px solid #8b5cf6'
-                }}>
-                  <h4 style={{ marginTop: 0, marginBottom: '15px', color: '#6d28d9' }}>5) Other Expenses Matrix</h4>
+            {/* 5) Other Expenses Matrix */}
+            <div style={{ 
+              marginBottom: '20px', 
+              padding: '20px', 
+              backgroundColor: '#fff', 
+              borderRadius: '8px',
+              border: '1px solid #8b5cf6'
+            }}>
+              <h4 style={{ marginTop: 0, marginBottom: '15px', color: '#6d28d9' }}>5) Other Expenses Matrix</h4>
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead>
@@ -6125,8 +6187,6 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
                     <strong>Note:</strong> These matrix amounts (Bhatta/Salary/Second Driver) are included in the driver balance calculation.
                   </div>
                 </div>
-              </>
-            )}
           </div>
 
           {/* Finalization Section */}
