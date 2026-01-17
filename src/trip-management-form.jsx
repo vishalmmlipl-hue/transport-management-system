@@ -4678,6 +4678,7 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
         // Fuel issued = total fuel entries (initial fuel removed from create-trip)
         const initialFuelIssued = selectedTrip?.fuelIssued ? (parseFloat(selectedTrip.fuelIssued) || 0) : 0;
         const totalFuelIssued = initialFuelIssued + (selectedTrip?.fuelEntries || []).reduce((s, e) => s + (parseFloat(e?.fuelLiters) || 0), 0);
+        const totalFuelAmount = (selectedTrip?.fuelEntries || []).reduce((s, e) => s + (parseFloat(e?.fuelAmount) || 0), 0);
         const expectedFuel = (desiredAvg > 0 && totalKM > 0) ? (totalKM / desiredAvg) : 0;
         const extraFuelLiters = totalFuelIssued - expectedFuel; // can be negative (short)
         const extraFuelAmount = extraFuelLiters * mpDieselRate;
@@ -4694,6 +4695,8 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
           (parseFloat(finalizeData.otherExpensesMatrix?.salary?.amount) || 0) +
           (parseFloat(finalizeData.otherExpensesMatrix?.secondDriver?.amount) || 0);
         const totalOtherExpenses = listExpensesTotal + matrixTotal;
+        // Trip cost (avoid double-counting advances): Fuel Amount + (Other list + Matrix)
+        const totalTripCost = totalFuelAmount + totalOtherExpenses;
 
         // Driver balance (Credit if positive, Debit if negative)
         const driverBalance = totalAdvancePaid - totalOtherExpenses - extraFuelAmount;
@@ -4705,12 +4708,14 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
           desiredAverage: desiredAvg,
           mpDieselRate: mpDieselRate,
           totalFuelIssued: totalFuelIssued,
+          totalFuelAmount: totalFuelAmount,
           expectedFuel: expectedFuel,
           extraFuelLiters: extraFuelLiters,
           extraFuelAmount: extraFuelAmount,
           actualAverage: actualAverage,
           totalAdvance: totalAdvancePaid,
           totalOtherExpenses: totalOtherExpenses,
+          totalTripCost: totalTripCost,
           otherExpensesListTotal: listExpensesTotal,
           matrixExpensesTotal: matrixTotal,
           otherExpensesMatrix: finalizeData.otherExpensesMatrix,
@@ -4784,6 +4789,7 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
 
     const initialFuelIssued = selectedTrip?.fuelIssued ? (parseFloat(selectedTrip.fuelIssued) || 0) : 0;
     const totalFuelIssued = initialFuelIssued + (fuelEntries || []).reduce((s, e) => s + (parseFloat(e?.fuelLiters) || 0), 0);
+    const totalFuelAmount = (fuelEntries || []).reduce((s, e) => s + (parseFloat(e?.fuelAmount) || 0), 0);
 
     const initialAdvancePaid = selectedTrip?.advanceToDriver ? (parseFloat(selectedTrip.advanceToDriver) || 0) : 0;
     const totalAdvancePaid = initialAdvancePaid + (advanceEntries || []).reduce((s, e) => s + (parseFloat(e?.amount) || 0), 0);
@@ -4805,6 +4811,9 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
     const extraFuelAmount = Number.isFinite(parseFloat(fd.extraFuelAmount)) ? parseFloat(fd.extraFuelAmount) : (extraFuelLiters * mpRate);
     const actualAvg = Number.isFinite(parseFloat(fd.actualAverage)) ? parseFloat(fd.actualAverage) : (totalFuelIssued > 0 && km > 0 ? (km / totalFuelIssued) : 0);
     const totalOtherExpensesAll = Number.isFinite(parseFloat(fd.totalOtherExpenses)) ? parseFloat(fd.totalOtherExpenses) : (listExpensesTotal + matrixTotalPrint);
+    const totalTripCost = Number.isFinite(parseFloat(fd.totalTripCost))
+      ? parseFloat(fd.totalTripCost)
+      : (totalFuelAmount + totalOtherExpensesAll);
     const driverBalance = Number.isFinite(parseFloat(fd.driverBalance)) ? parseFloat(fd.driverBalance) : (totalAdvancePaid - totalOtherExpensesAll - extraFuelAmount);
     const driverBalanceType = fd.driverBalanceType || (driverBalance >= 0 ? 'Credit' : 'Debit');
 
@@ -4835,7 +4844,9 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
       ['MP Diesel Rate (₹/L)', mpRate],
       ['Extra Fuel Amount (₹)', extraFuelAmount],
       ['Total Advance (₹)', totalAdvancePaid],
+      ['Total Fuel Amount (₹)', totalFuelAmount],
       ['Total Other Expenses (₹)', totalOtherExpensesAll],
+      ['Total Trip Cost (₹)', totalTripCost],
       ['Driver Balance Type', driverBalanceType],
       ['Driver Balance (₹)', driverBalance],
       [],
@@ -4966,6 +4977,9 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
     const extraFuelAmount = Number.isFinite(parseFloat(fd.extraFuelAmount)) ? parseFloat(fd.extraFuelAmount) : (extraFuelLiters * mpRate);
     const actualAvg = Number.isFinite(parseFloat(fd.actualAverage)) ? parseFloat(fd.actualAverage) : (totalFuelLiters > 0 && km > 0 ? (km / totalFuelLiters) : 0);
     const totalOtherExpensesAll = Number.isFinite(parseFloat(fd.totalOtherExpenses)) ? parseFloat(fd.totalOtherExpenses) : (totalOtherAmount + matrixTotalPrint);
+    const totalTripCost = Number.isFinite(parseFloat(fd.totalTripCost))
+      ? parseFloat(fd.totalTripCost)
+      : (totalFuelAmount + totalOtherExpensesAll);
     const driverBalance = Number.isFinite(parseFloat(fd.driverBalance)) ? parseFloat(fd.driverBalance) : (totalAdvanceAmount - totalOtherExpensesAll - extraFuelAmount);
     const driverBalanceType = fd.driverBalanceType || (driverBalance >= 0 ? 'Credit' : 'Debit');
 
@@ -5029,6 +5043,7 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
     <div class="card"><strong>Total Fuel</strong><div>${escapeHtml(totalFuelLiters.toFixed(2))} L • ₹ ${escapeHtml(totalFuelAmount.toFixed(2))}</div></div>
     <div class="card"><strong>Total Other Expenses</strong><div>₹ ${escapeHtml(totalOtherAmount.toFixed(2))}</div></div>
     <div class="card"><strong>Matrix Total (Bhatta+Salary+Second Driver)</strong><div>₹ ${escapeHtml(matrixTotalPrint.toFixed(2))}</div></div>
+    <div class="card"><strong>Total Trip Cost</strong><div>₹ ${escapeHtml(totalTripCost.toFixed(2))}</div></div>
   </div>
 
   <h2>Fuel Average & Driver Balance Calculations</h2>
@@ -5042,7 +5057,9 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
       <tr><th>Fuel Difference (Issued − Expected) (L)</th><td>${escapeHtml(extraFuelLiters.toFixed(2))}</td></tr>
       <tr><th>MP Diesel Rate (₹/L)</th><td>${escapeHtml(mpRate.toFixed(2))}</td></tr>
       <tr><th>Extra Fuel Amount (₹)</th><td>${escapeHtml(extraFuelAmount.toFixed(2))}</td></tr>
+      <tr><th>Total Fuel Amount (₹)</th><td>${escapeHtml(totalFuelAmount.toFixed(2))}</td></tr>
       <tr><th>Total Other Expenses (List + Matrix) (₹)</th><td>${escapeHtml(totalOtherExpensesAll.toFixed(2))}</td></tr>
+      <tr><th>Total Trip Cost (Fuel + Other) (₹)</th><td>${escapeHtml(totalTripCost.toFixed(2))}</td></tr>
       <tr><th>Driver Balance Type</th><td>${escapeHtml(driverBalanceType)}</td></tr>
       <tr><th>Driver Balance (₹)</th><td>${escapeHtml(driverBalance.toFixed(2))}</td></tr>
     </tbody>
@@ -5180,6 +5197,7 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
   const totalFuelEntries = selectedTrip?.fuelEntries?.reduce((sum, entry) => sum + (parseFloat(entry.fuelLiters) || 0), 0) || 0;
   const totalAdvanceEntries = selectedTrip?.advanceEntries?.reduce((sum, entry) => sum + (parseFloat(entry.amount) || 0), 0) || 0;
   const totalFuel = initialAdvanceFuel + totalFuelEntries;
+  const totalFuelAmountView = selectedTrip?.fuelEntries?.reduce((sum, entry) => sum + (parseFloat(entry?.fuelAmount) || 0), 0) || 0;
   const totalAdvance = initialAdvanceAmount + totalAdvanceEntries;
   const totalOtherExpenses = (otherExpenses || []).reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0);
   
@@ -5203,6 +5221,7 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
   
   // Driver balance: Credit (+) means driver has to return, Debit (-) means company has to pay
   const finalBalance = totalAdvance - (totalOtherExpenses + matrixTotal) - extraFuelAmountNum;
+  const totalTripCostView = totalFuelAmountView + totalOtherExpenses + matrixTotal;
 
   return (
     <div className="form-section">
@@ -6217,6 +6236,12 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
                     </div>
                   )}
                   <div style={{ fontSize: '18px', marginBottom: '10px' }}>
+                    <strong>Total Fuel Amount:</strong> ₹{totalFuelAmountView.toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: '18px', marginBottom: '10px' }}>
+                    <strong>Total Trip Cost:</strong> ₹{totalTripCostView.toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: '18px', marginBottom: '10px' }}>
                     <strong>Extra Fuel Amount (₹):</strong> ₹{extraFuelAmount}
                   </div>
                   <div style={{ 
@@ -6289,10 +6314,27 @@ function ViewEditFinalizeExpenses({ trips, setTrips, fuelVendors: propFuelVendor
                   <div><strong>Desired Average:</strong> {selectedTrip.finalizedData.desiredAverage} KM/L</div>
                   <div><strong>Actual Average:</strong> {parseFloat(selectedTrip.finalizedData.actualAverage || 0).toFixed(2)} KM/L</div>
                   <div><strong>Fuel Issued:</strong> {parseFloat(selectedTrip.finalizedData.totalFuelIssued || 0).toFixed(2)} Liters</div>
+                  <div><strong>Total Fuel Amount:</strong> ₹{(() => {
+                    const fd = selectedTrip.finalizedData || {};
+                    const stored = parseFloat(fd.totalFuelAmount);
+                    if (Number.isFinite(stored)) return stored.toFixed(2);
+                    const computed = (selectedTrip?.fuelEntries || []).reduce((s, e) => s + (parseFloat(e?.fuelAmount) || 0), 0);
+                    return computed.toFixed(2);
+                  })()}</div>
                   <div><strong>Expected Consumption:</strong> {parseFloat(selectedTrip.finalizedData.expectedFuel || 0).toFixed(2)} Liters</div>
                   <div><strong>Fuel Difference:</strong> {parseFloat(selectedTrip.finalizedData.extraFuelLiters || 0).toFixed(2)} Liters</div>
                   <div><strong>MP Diesel Rate:</strong> ₹{parseFloat(selectedTrip.finalizedData.mpDieselRate || 0).toFixed(2)}/L</div>
                   <div><strong>Extra Fuel Amount:</strong> ₹{parseFloat(selectedTrip.finalizedData.extraFuelAmount || 0).toFixed(2)}</div>
+                  <div><strong>Total Trip Cost:</strong> ₹{(() => {
+                    const fd = selectedTrip.finalizedData || {};
+                    const stored = parseFloat(fd.totalTripCost);
+                    if (Number.isFinite(stored)) return stored.toFixed(2);
+                    const totalOther = parseFloat(fd.totalOtherExpenses) || 0;
+                    const fuelAmt = Number.isFinite(parseFloat(fd.totalFuelAmount))
+                      ? parseFloat(fd.totalFuelAmount)
+                      : (selectedTrip?.fuelEntries || []).reduce((s, e) => s + (parseFloat(e?.fuelAmount) || 0), 0);
+                    return (fuelAmt + totalOther).toFixed(2);
+                  })()}</div>
                 </div>
                 <div style={{ 
                   padding: '15px', 
