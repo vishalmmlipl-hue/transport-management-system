@@ -1803,7 +1803,14 @@ export default function TripManagementForm() {
                   >
                     <option value="">-- Select Original Trip --</option>
                     {trips
-                      .filter(t => !t.isReturnTrip) // Only show non-return trips
+                      .filter(t => {
+                        // Only show non-return trips that are not closed
+                        // If editing an existing return trip, keep the currently selected parent visible even if closed.
+                        if (t.isReturnTrip) return false;
+                        const isClosed = (t.status === 'Closed') || (t.finalized === true);
+                        if (!isClosed) return true;
+                        return formData.parentTripNumber && t.tripNumber === formData.parentTripNumber;
+                      })
                       .map(trip => (
                         <option key={trip.id} value={trip.tripNumber}>
                           {trip.tripNumber} - {trip.origin} → {trip.destination} ({trip.tripDate})
