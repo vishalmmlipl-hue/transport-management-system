@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Users, MapPin, Truck, Package, UserCheck, Briefcase, Building2, UserCog, ClipboardList, CheckCircle, Receipt, DollarSign, BarChart, LogOut, User, Menu, X, Home, Settings, ChevronRight, TrendingUp, BookOpen, Hash, PackageCheck, Database, Edit2, Wallet } from 'lucide-react';
-import initSampleData from './init-sample-data';
+import { FileText, Users, MapPin, Truck, Package, UserCheck, Briefcase, Building2, UserCog, ClipboardList, CheckCircle, Receipt, DollarSign, BarChart, LogOut, User, Menu, X, Home, Settings, ChevronRight, TrendingUp, BookOpen, Hash, PackageCheck, Edit2, Wallet } from 'lucide-react';
 
 import LoginForm from './login-form.jsx';
 import ClientMasterForm from './client-master-form.jsx';
@@ -24,7 +23,6 @@ import LRTrackingSearch from './lr-tracking-search.jsx';
 import ManifestForm from './manifest-form.jsx';
 import ManifestReceiveForm from './manifest-receive-form.jsx';
 import TripManagementForm from './trip-management-form.jsx';
-import NetworkUrlDisplay from './network-url-display.jsx';
 import PODForm from './pod-form.jsx';
 import ManagePODForm from './manage-pod-form.jsx';
 import BillingInvoiceForm from './billing-invoice-form.jsx';

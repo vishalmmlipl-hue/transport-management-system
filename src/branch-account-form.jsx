@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, Building2, Wallet, DollarSign, Edit2, X } from 'lucide-react';
+import { Save, Trash2, Wallet, DollarSign, Edit2, X } from 'lucide-react';
 
 export default function BranchAccountForm() {
   const [branches, setBranches] = useState([]);

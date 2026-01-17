@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, Truck, Search, Loader, CheckCircle, AlertCircle } from 'lucide-react';
+import { Save, Search, Loader, CheckCircle, AlertCircle } from 'lucide-react';
 import { vehiclesService, dataService } from './services/dataService';
 
 export default function VehicleMasterForm() {
@@ -170,7 +170,7 @@ export default function VehicleMasterForm() {
       };
       
       // Create vehicle using data service (works with database or localStorage)
-      const created = await vehiclesService.create(newVehicle);
+      await vehiclesService.create(newVehicle);
       
       const storageMode = dataService.getStorageMode();
       alert(`✅ Vehicle "${formData.vehicleNumber}" created successfully!\n\nStorage: ${storageMode === 'database' ? 'Cloud Database' : 'Local Storage'}\n\nThis vehicle is now available for selection in FTL bookings.`);

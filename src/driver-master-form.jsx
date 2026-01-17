@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Shield, CreditCard, CheckCircle, AlertCircle, Loader, Search, Upload, X, Trash2 } from 'lucide-react';
+import { Save, Shield, CreditCard, CheckCircle, Upload, X, Trash2 } from 'lucide-react';
 
 export default function DriverMasterWithGovVerification() {
   const [drivers, setDrivers] = useState([]);

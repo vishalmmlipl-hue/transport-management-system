@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Calculator, Printer, Search, Edit2 } from 'lucide-react';
+import { Plus, Trash2, Calculator, Printer } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
+import syncService from './services/syncService';
 
 export default function LRBookingForm() {
   // Load TBB clients from localStorage
@@ -10,11 +11,11 @@ export default function LRBookingForm() {
   const [branches, setBranches] = useState([]);
   const [clientRates, setClientRates] = useState([]);
 
-  const [selectedClient, setSelectedClient] = useState(null);
+  const [, setSelectedClient] = useState(null);
   const [selectedOrigin, setSelectedOrigin] = useState(null);
   const [selectedDestination, setSelectedDestination] = useState(null);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
-  const [selectedBranch, setSelectedBranch] = useState(null);
+  const [, setSelectedBranch] = useState(null);
   
   // City search states for first 3 letters filtering
   const [originSearch, setOriginSearch] = useState('');
@@ -174,6 +175,7 @@ export default function LRBookingForm() {
 
   useEffect(() => {
     calculateTotals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.charges, formData.cftDimensions]);
 
   // Set selected client when TBB client is selected
@@ -410,6 +412,7 @@ export default function LRBookingForm() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.paymentMode, formData.tbbClient, formData.origin, formData.destination, clientRates, cities, tbbClients]);
 
   // Fetch freight from Rate Master for FTL + TBB mode
@@ -464,6 +467,7 @@ export default function LRBookingForm() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.bookingMode, formData.paymentMode, formData.tbbClient, formData.origin, formData.destination, clientRates, cities, tbbClients]);
 
   // Fetch pickup/delivery charges from Rate Master for FTL + TBB mode
@@ -553,6 +557,7 @@ export default function LRBookingForm() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.bookingMode, formData.paymentMode, formData.tbbClient, clientRates, cities, tbbClients]);
 
   // Auto-update pieces and weight from pickup/delivery points for FTL mode
@@ -777,6 +782,7 @@ export default function LRBookingForm() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.paymentMode, formData.charges.rate, formData.charges.calculationMethod, formData.pieces, formData.weight, formData.calculatedCFT, formData.cftDimensions]);
 
   // Calculate balance freight for FTL mode
@@ -799,6 +805,7 @@ export default function LRBookingForm() {
     }
   }, [formData.bookingMode, formData.charges.freightRate, formData.charges.advanceFreight, formData.charges.agentCommission, formData.charges.tdsDeducted]);
 
+  // eslint-disable-next-line no-unused-vars
   const calculateCFT = () => {
     const { length, width, height, unit, factor } = formData.cftDimensions;
     if (!length || !width || !height) return 0;
@@ -823,6 +830,7 @@ export default function LRBookingForm() {
   };
 
   // Calculate CFT Weight using the specified formulas
+  // eslint-disable-next-line no-unused-vars
   const calculateCFTWeight = () => {
     const { length, width, height, unit, factor } = formData.cftDimensions;
     if (!length || !width || !height) return 0;
@@ -922,6 +930,7 @@ export default function LRBookingForm() {
   };
 
   // FTL Mode: Pickup and Delivery Points Management
+  // eslint-disable-next-line no-unused-vars
   const addPickupPoint = () => {
     const newPoint = {
       id: Date.now(),
@@ -942,6 +951,7 @@ export default function LRBookingForm() {
     }));
   };
 
+  // eslint-disable-next-line no-unused-vars
   const removePickupPoint = (id) => {
     setFormData(prev => ({
       ...prev,
@@ -949,6 +959,7 @@ export default function LRBookingForm() {
     }));
   };
 
+  // eslint-disable-next-line no-unused-vars
   const updatePickupPoint = (id, field, value) => {
     setFormData(prev => ({
       ...prev,
@@ -971,6 +982,7 @@ export default function LRBookingForm() {
     }));
   };
 
+  // eslint-disable-next-line no-unused-vars
   const addDeliveryPoint = () => {
     const newPoint = {
       id: Date.now(),
@@ -991,6 +1003,7 @@ export default function LRBookingForm() {
     }));
   };
 
+  // eslint-disable-next-line no-unused-vars
   const removeDeliveryPoint = (id) => {
     setFormData(prev => ({
       ...prev,
@@ -998,6 +1011,7 @@ export default function LRBookingForm() {
     }));
   };
 
+  // eslint-disable-next-line no-unused-vars
   const updateDeliveryPoint = (id, field, value) => {
     setFormData(prev => ({
       ...prev,
@@ -1034,6 +1048,7 @@ export default function LRBookingForm() {
   };
 
   const calculateTotals = () => {
+    // eslint-disable-next-line no-unused-vars
     const { rate, freightRate, lrCharges, hamali, pickupCharges, deliveryCharges, odaCharges, other, waraiUnion, gstPercent } = formData.charges;
     
     // Always use separate pickup and delivery charges
@@ -1189,11 +1204,10 @@ export default function LRBookingForm() {
     isFreightManual.current = false;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Save LR to localStorage
-    const existingLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+
+    // Save LR using sync service (saves to localStorage AND syncs to backend)
     const newLR = {
       id: Date.now(),
       ...formData,
@@ -1201,10 +1215,9 @@ export default function LRBookingForm() {
       status: 'Booked',
       createdAt: new Date().toISOString()
     };
-    
-    existingLRs.push(newLR);
-    localStorage.setItem('lrBookings', JSON.stringify(existingLRs));
-    
+
+    await syncService.create('lrBookings', newLR);
+
     // Store saved LR ID and show dialog
     setLastSavedLRId(newLR.id);
     setShowSaveDialog(true);

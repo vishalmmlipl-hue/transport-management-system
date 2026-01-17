@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Save, MapPin, Search, RefreshCw, Database, AlertCircle, X } from 'lucide-react';
+import { Save, MapPin, Search, RefreshCw, Database, AlertCircle } from 'lucide-react';
 import initSampleData from './init-sample-data';
 
 export default function CityMasterForm() {
@@ -34,6 +34,7 @@ export default function CityMasterForm() {
 
   useEffect(() => {
     filterCities();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, filterState, cities]);
 
   useEffect(() => {

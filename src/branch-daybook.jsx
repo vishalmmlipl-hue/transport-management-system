@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Building2, DollarSign, TrendingUp, TrendingDown, Wallet, Filter, Download, Plus, Image, X } from 'lucide-react';
+import { TrendingUp, TrendingDown, Plus, Image, X } from 'lucide-react';
 import { createBranchExpenseLedger } from './utils/ledgerService';
 
 export default function BranchDayBook() {
@@ -86,6 +86,7 @@ export default function BranchDayBook() {
       // Update expense form date when selected date changes
       setExpenseForm(prev => ({ ...prev, expenseDate: selectedDate }));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBranch, selectedDate, branchAccounts]);
 
   const loadDayBookData = () => {

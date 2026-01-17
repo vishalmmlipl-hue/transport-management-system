@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Filter, FileText } from 'lucide-react';
+import { Download } from 'lucide-react';
 
 export default function FTLInquiryReport() {
   const [inquiries, setInquiries] = useState([]);
   const [branches, setBranches] = useState([]);
   const [clients, setClients] = useState([]);
   const [cities, setCities] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
@@ -46,9 +46,8 @@ export default function FTLInquiryReport() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Sync with admin branch selector
   useEffect(() => {
     if (isAdmin) {
       const checkBranchChange = () => {

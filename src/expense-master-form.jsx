@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, Edit2, DollarSign, FileText, Building2, BookOpen, X } from 'lucide-react';
+import { Save, Plus, Trash2, Edit2, DollarSign, FileText, BookOpen, X } from 'lucide-react';
 
 export default function ExpenseMasterForm() {
   const [expenseMaster, setExpenseMaster] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [, setSelectedCategory] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Camera, CheckCircle, Package, User, Calendar, MapPin, FileText, Upload, X, Image as ImageIcon, Scan, Sparkles } from 'lucide-react';
+import { CheckCircle, Upload, X, Sparkles } from 'lucide-react';
 
 export default function PODForm() {
   const [lrBookings, setLrBookings] = useState([]);
@@ -70,15 +70,17 @@ export default function PODForm() {
         ctx.drawImage(img, 0, 0);
 
         // Get image data for analysis
+        // eslint-disable-next-line no-unused-vars
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        
+
         // Simple pattern matching for LR numbers (10 digits)
         // In production, you'd use Tesseract.js or similar OCR library
         // For demo: try to extract 10-digit numbers from filename or metadata
-        
+
         // Simulate OCR detection (in real app, use Tesseract.js)
         setTimeout(() => {
           // Try to match against existing LR numbers
+          // eslint-disable-next-line no-unused-vars
           const allLRNumbers = lrBookings.map(lr => lr.lrNumber);
           
           // For demo: if image filename contains digits, try to match
@@ -866,7 +868,7 @@ export default function PODForm() {
                 <label>POD Photo</label>
                 {photoPreview && (
                   <div className="image-preview">
-                    <img src={photoPreview} alt="POD Photo" />
+                    <img src={photoPreview} alt="POD Preview" />
                     <button
                       type="button"
                       className="remove-image"
@@ -945,7 +947,7 @@ export default function PODForm() {
                     )}
                     {pod.podPhoto && (
                       <div className="pod-image-thumb">
-                        <img src={pod.podPhoto} alt="POD Photo" />
+                        <img src={pod.podPhoto} alt="POD Preview" />
                         <div className="image-label">📸 POD Photo</div>
                       </div>
                     )}

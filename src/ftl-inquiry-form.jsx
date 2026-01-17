@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, CheckCircle, XCircle, Truck, User, Plus, Search, Edit2, Trash2 } from 'lucide-react';
+import { Save, CheckCircle, XCircle, Truck, Edit2, Trash2 } from 'lucide-react';
 
 export default function FTLInquiryForm() {
   const [inquiries, setInquiries] = useState([]);
@@ -94,9 +94,8 @@ export default function FTLInquiryForm() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Generate inquiry number
   useEffect(() => {
     if (!editingId && !formData.inquiryNumber) {
       const existingInquiries = JSON.parse(localStorage.getItem('ftlInquiries') || '[]');
@@ -323,6 +322,7 @@ export default function FTLInquiryForm() {
     return client ? (client.companyName || client.clientName) : 'N/A';
   };
 
+  // eslint-disable-next-line no-unused-vars
   const getBranchName = (branchId) => {
     const branch = branches.find(b => b.id.toString() === branchId);
     return branch ? branch.branchName : 'N/A';
@@ -854,6 +854,7 @@ export default function FTLInquiryForm() {
           <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <select
               onChange={(e) => {
+                // eslint-disable-next-line no-unused-vars
                 const status = e.target.value;
                 // Filter logic can be added here if needed
               }}

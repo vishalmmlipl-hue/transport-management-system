@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Truck, Calendar, MapPin, Search, Filter, CheckCircle, Clock, AlertCircle, Upload, Save, X, Edit2 } from 'lucide-react';
+import { Package, Truck, MapPin, Search, Filter, CheckCircle, Clock, AlertCircle, Upload, Save, X, Edit2 } from 'lucide-react';
+import syncService from './services/syncService';
 
 export default function PendingShipmentsBranch() {
   const [lrBookings, setLrBookings] = useState([]);
@@ -9,7 +10,7 @@ export default function PendingShipmentsBranch() {
   const [branches, setBranches] = useState([]);
   const [cities, setCities] = useState([]);
   const [pods, setPods] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState(null);
   const [filterStatus, setFilterStatus] = useState('All'); // Pending Dispatch, Manifested, In Transit, Delivered, All
@@ -331,7 +332,7 @@ export default function PendingShipmentsBranch() {
   };
 
   // Handle POD Save
-  const handleSavePOD = (lr) => {
+  const handleSavePOD = async (lr) => {
     const formData = podFormData[lr.id];
     if (!formData) {
       alert('⚠️ Please fill in POD details');
@@ -339,7 +340,7 @@ export default function PendingShipmentsBranch() {
     }
 
     const existingPODs = JSON.parse(localStorage.getItem('pods') || '[]');
-    
+
     // Check if POD already exists
     const existingPODIndex = existingPODs.findIndex(pod => {
       const podLRId = typeof pod.lrNumber === 'object' ? pod.lrNumber.id : pod.lrNumber;
@@ -377,13 +378,15 @@ export default function PendingShipmentsBranch() {
 
     if (existingPODIndex >= 0) {
       existingPODs[existingPODIndex] = newPOD;
+      await syncService.update('pods', newPOD.id, newPOD);
     } else {
       existingPODs.push(newPOD);
+      await syncService.create('pods', newPOD);
     }
 
     localStorage.setItem('pods', JSON.stringify(existingPODs));
     setPods(existingPODs);
-    
+
     // Update LR status to delivered
     const updatedLRs = lrBookings.map(l => {
       if (l.id === lr.id) {
@@ -393,6 +396,9 @@ export default function PendingShipmentsBranch() {
     });
     localStorage.setItem('lrBookings', JSON.stringify(updatedLRs));
     setLrBookings(updatedLRs);
+
+    // Sync LR update to backend
+    await syncService.update('lrBookings', lr.id, { status: 'Delivered', podUploaded: true });
 
     alert(`✅ POD "${podNumber}" ${existingPODIndex >= 0 ? 'updated' : 'created'} successfully!\n\nLR: ${lr.lrNumber}\nReceiver: ${formData.receiverName}\nPieces: ${formData.piecesDelivered}`);
     

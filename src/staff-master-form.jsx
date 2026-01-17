@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Users } from 'lucide-react';
+import { Save } from 'lucide-react';
 
 export default function StaffMasterForm() {
   const [branches, setBranches] = useState([]);

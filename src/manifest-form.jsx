@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, Printer, Truck, User, Search, X, Edit2 } from 'lucide-react';
+import { Save, Trash2, Printer, Search, X, Edit2 } from 'lucide-react';
+import syncService from './services/syncService';
 
 export default function ManifestForm() {
   const [lrBookings, setLrBookings] = useState([]);
@@ -316,7 +317,7 @@ export default function ManifestForm() {
   };
 
   // Handle delete manifest
-  const handleDelete = (manifest) => {
+  const handleDelete = async (manifest) => {
     if (hasTrip(manifest.id)) {
       alert('⚠️ This manifest cannot be deleted. A trip has already been created for it.');
       return;
@@ -326,10 +327,10 @@ export default function ManifestForm() {
       return;
     }
 
-    // Remove manifest from localStorage
+    // Remove manifest using sync service (removes from localStorage AND syncs to backend)
+    await syncService.delete('manifests', manifest.id);
     const updatedManifests = manifests.filter(m => m.id !== manifest.id);
     setManifests(updatedManifests);
-    localStorage.setItem('manifests', JSON.stringify(updatedManifests));
 
     // Update search results
     setSearchResults(searchResults.filter(m => m.id !== manifest.id));
@@ -428,17 +429,17 @@ export default function ManifestForm() {
     return driver ? driver.driverName : driverId;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (formData.selectedLRs.length === 0) {
       alert('⚠️ Please select at least one LR for the manifest!');
       return;
     }
 
     const existingManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    
-    const selectedLRDetails = lrBookings.filter(lr => 
+
+    const selectedLRDetails = lrBookings.filter(lr =>
       formData.selectedLRs.includes(lr.id)
     );
 
@@ -449,8 +450,8 @@ export default function ManifestForm() {
       if (firstLR.destination) {
         const destinationCity = cities.find(c => c.code === firstLR.destination || c.cityName === firstLR.destination);
         if (destinationCity) {
-          const destBranch = branches.find(b => 
-            b.address.city === destinationCity.cityName || 
+          const destBranch = branches.find(b =>
+            b.address.city === destinationCity.cityName ||
             b.address.state === destinationCity.state
           );
           if (destBranch) {
@@ -465,7 +466,7 @@ export default function ManifestForm() {
       const manifestIndex = existingManifests.findIndex(m => m.id === editingManifestId);
       if (manifestIndex !== -1) {
         const existingManifest = existingManifests[manifestIndex];
-        existingManifests[manifestIndex] = {
+        const updatedManifest = {
           ...existingManifest,
           manifestDate: formData.manifestDate,
           branch: formData.branch,
@@ -481,9 +482,13 @@ export default function ManifestForm() {
           summary: manifestSummary,
           remarks: formData.remarks
         };
+        existingManifests[manifestIndex] = updatedManifest;
         localStorage.setItem('manifests', JSON.stringify(existingManifests));
         setManifests(existingManifests);
-        
+
+        // Sync to backend
+        await syncService.update('manifests', editingManifestId, updatedManifest);
+
         const updatedManifestNumber = formData.manifestNumber;
         
         // Reset form completely
@@ -537,8 +542,9 @@ export default function ManifestForm() {
         createdAt: new Date().toISOString()
       };
 
+      // Save using sync service (saves to localStorage AND syncs to backend)
+      await syncService.create('manifests', newManifest);
       existingManifests.push(newManifest);
-      localStorage.setItem('manifests', JSON.stringify(existingManifests));
       setManifests(existingManifests);
 
       alert(`Manifest "${formData.manifestNumber}" created successfully!\n\nTotal LRs: ${manifestSummary.lrCount}\nTotal Pieces: ${manifestSummary.totalPieces}\nTotal Weight: ${manifestSummary.totalWeight} Kg\n\nYou can now print the manifest.`);

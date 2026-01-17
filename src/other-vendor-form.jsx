@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, ShoppingCart } from 'lucide-react';
+import { Save } from 'lucide-react';
 
 export default function OtherVendorForm() {
   const [formData, setFormData] = useState({

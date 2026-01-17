@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Hash, Building2, CheckCircle, AlertCircle, Trash2 } from 'lucide-react';
+import { Save, CheckCircle, Trash2 } from 'lucide-react';
 
 export default function LRSeriesMaster() {
   const [lrSeries, setLrSeries] = useState([]);
@@ -66,6 +66,7 @@ export default function LRSeriesMaster() {
         }));
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.startNumber, formData.endNumber, formData.usedNumbers]);
 
   const validateSeries = () => {

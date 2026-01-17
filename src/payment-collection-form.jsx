@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, DollarSign, Receipt, FileText, Wallet } from 'lucide-react';
+import { Save, Receipt, FileText, Wallet } from 'lucide-react';
 
 export default function PaymentCollectionFormEnhanced() {
   const [payments, setPayments] = useState([]);

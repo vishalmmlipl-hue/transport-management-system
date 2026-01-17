@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, Truck, Plus, Trash2 } from 'lucide-react';
+import { Save, Plus, Trash2 } from 'lucide-react';
 
 export default function MarketVehicleVendorForm() {
   const [formData, setFormData] = useState({

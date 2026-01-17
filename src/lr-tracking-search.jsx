@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, FileText, Eye, Edit, Trash2, X, Printer } from 'lucide-react';
+import { Search, Eye, Edit, Trash2, X, Printer } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
 
 const monoStyle = {

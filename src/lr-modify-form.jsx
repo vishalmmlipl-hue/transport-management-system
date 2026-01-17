@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Save, Trash2, AlertCircle, Lock, Edit2, Printer, Search, Eye, Calculator, Plus, Home, ArrowLeft } from 'lucide-react';
+import { Save, Trash2, AlertCircle, Lock, Edit2, Printer, Search, Eye, Calculator, Plus, ArrowLeft } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
+import syncService from './services/syncService';
 
 export default function LRModifyForm() {
   const [lrBookings, setLrBookings] = useState([]);
-  const [manifests, setManifests] = useState([]);
-  const [invoices, setInvoices] = useState([]);
-  const [pods, setPods] = useState([]);
+  const [, setManifests] = useState([]);
+  const [, setInvoices] = useState([]);
+  const [, setPods] = useState([]);
   const [currentLR, setCurrentLR] = useState(null);
   const [editMode, setEditMode] = useState('full'); // 'full', 'charges-only', 'none' - internal edit permissions
   const [viewMode, setViewMode] = useState('view'); // 'view', 'edit', 'delete' - user action mode
@@ -18,7 +19,7 @@ export default function LRModifyForm() {
   const [showPrintView, setShowPrintView] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLRId, setSelectedLRId] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showCFTCalculator, setShowCFTCalculator] = useState(false);
   const [cftEntries, setCftEntries] = useState([{
@@ -119,22 +120,25 @@ export default function LRModifyForm() {
 
   useEffect(() => {
     loadLRData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (selectedLRId) {
       loadLRData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLRId]);
-    
+
   // Listen for storage changes to reload when LR is updated elsewhere
   useEffect(() => {
     const handleStorageChange = () => {
       loadLRData();
     };
-    
+
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Helper function to get city name from ID or code
@@ -149,6 +153,7 @@ export default function LRModifyForm() {
   };
 
   // Helper function to get city ID from stored value (could be ID or code)
+  // eslint-disable-next-line no-unused-vars
   const getCityId = (cityValue) => {
     if (!cityValue) return '';
     const city = cities.find(c => 
@@ -196,7 +201,8 @@ export default function LRModifyForm() {
 
   const calculateTotals = () => {
     if (!formData || !formData.charges) return;
-    
+
+    // eslint-disable-next-line no-unused-vars
     const { rate, freightRate, lrCharges, hamali, pickupCharges, deliveryCharges, odaCharges, other, waraiUnion, gstPercent } = formData.charges;
     
     // Rate is per-piece/per-kg rate, not an amount. Only freightRate (calculated amount) should be included
@@ -380,6 +386,7 @@ export default function LRModifyForm() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData?.paymentMode, formData?.tbbClient, formData?.origin, formData?.destination, clientRates, cities, tbbClients]);
 
   // Auto-calculate freight based on rate and calculation method (Per Piece or Per KG)
@@ -479,6 +486,7 @@ export default function LRModifyForm() {
     
     // Always recalculate totals after freight calculation
     calculateTotals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     formData?.paymentMode, 
     formData?.charges?.rate, 
@@ -498,6 +506,7 @@ export default function LRModifyForm() {
     if (formData && formData.charges) {
       calculateTotals();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     formData?.charges?.freightRate,
     formData?.charges?.lrCharges,
@@ -610,7 +619,7 @@ export default function LRModifyForm() {
     setShowCFTCalculator(false);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData || !currentLR) return;
 
@@ -626,15 +635,16 @@ export default function LRModifyForm() {
 
     const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
     const lrIndex = allLRs.findIndex(lr => lr.id === currentLR.id);
-    
+
     if (lrIndex === -1) {
       alert('LR not found!');
       return;
     }
 
+    let updatedLRData;
     // If charges-only mode, only update charges
     if (editMode === 'charges-only') {
-      allLRs[lrIndex] = {
+      updatedLRData = {
         ...allLRs[lrIndex],
         charges: formData.charges,
         totalAmount: formData.totalAmount,
@@ -643,18 +653,22 @@ export default function LRModifyForm() {
       };
     } else {
       // Full edit mode - update everything
-      allLRs[lrIndex] = {
+      updatedLRData = {
         ...formData,
         cftEntries: cftEntries, // Include CFT entries for dimensions
         updatedAt: new Date().toISOString()
       };
     }
 
+    allLRs[lrIndex] = updatedLRData;
     localStorage.setItem('lrBookings', JSON.stringify(allLRs));
     setLrBookings(allLRs);
-    
+
+    // Sync update to backend
+    await syncService.update('lrBookings', currentLR.id, updatedLRData);
+
     alert(`✅ LR ${editMode === 'charges-only' ? 'charges' : 'details'} updated successfully!`);
-    
+
     // Switch back to view mode after successful update
     setViewMode('view');
     // Reload the updated LR
@@ -665,12 +679,12 @@ export default function LRModifyForm() {
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!currentLR) return;
 
     // Check if manifested
     const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const inManifest = allManifests.some(m => 
+    const inManifest = allManifests.some(m =>
       m.selectedLRs?.some(mlr => {
         const mlrId = typeof mlr === 'object' ? mlr.id : mlr;
         return mlrId === currentLR.id;
@@ -685,8 +699,8 @@ export default function LRModifyForm() {
 
     // Check if billed
     const allInvoices = JSON.parse(localStorage.getItem('invoices') || '[]');
-    const isBilled = allInvoices.some(inv => 
-      inv.lrNumbers?.includes(currentLR.lrNumber) || 
+    const isBilled = allInvoices.some(inv =>
+      inv.lrNumbers?.includes(currentLR.lrNumber) ||
       inv.lrNumbers?.some(ln => ln === currentLR.lrNumber) ||
       inv.lrDetails?.some(ld => ld.id === currentLR.id || ld.lrNumber === currentLR.lrNumber)
     );
@@ -697,10 +711,10 @@ export default function LRModifyForm() {
       return;
     }
 
-    // Delete confirmation is already shown in the delete mode UI
+    // Delete using sync service (removes from localStorage AND syncs to backend)
+    await syncService.delete('lrBookings', currentLR.id);
     const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
     const updatedLRs = allLRs.filter(lr => lr.id !== currentLR.id);
-    localStorage.setItem('lrBookings', JSON.stringify(updatedLRs));
     setLrBookings(updatedLRs);
     setCurrentLR(null);
     setFormData(null);
@@ -1430,6 +1444,7 @@ export default function LRModifyForm() {
                     value={formData.tbbClient || ''}
                     onChange={(e) => {
                       const clientId = e.target.value;
+                      // eslint-disable-next-line no-unused-vars
                       const client = tbbClients.find(c => c.id?.toString() === clientId);
                       setFormData(prev => ({ 
                         ...prev, 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, Truck, User, FileText, DollarSign, Fuel, X, Calendar, Clock, Edit2, CheckCircle } from 'lucide-react';
+import { Save, Plus, FileText, DollarSign, Fuel, X, Edit2, CheckCircle } from 'lucide-react';
+import syncService from './services/syncService';
 
 export default function TripManagementForm() {
   const [vehicles, setVehicles] = useState([]);
@@ -184,6 +185,7 @@ export default function TripManagementForm() {
       setSelectedOrigin(null);
       setOriginSearch('');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.origin, cities]);
 
   // Sync selectedDestination with formData.destination when formData.destination changes (for editing)
@@ -198,9 +200,9 @@ export default function TripManagementForm() {
       setSelectedDestination(null);
       setDestinationSearch('');
     }
-  }, [formData.destination, cities]);
+  }, [formData.destination, cities, selectedDestination]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
     // Validation
@@ -246,7 +248,7 @@ export default function TripManagementForm() {
     
     try {
       const existingTrips = JSON.parse(localStorage.getItem('trips') || '[]');
-      
+
       const newTrip = {
         id: Date.now(),
         ...formData,
@@ -255,8 +257,9 @@ export default function TripManagementForm() {
         updatedAt: new Date().toISOString()
       };
 
+      // Save using sync service (saves to localStorage AND syncs to backend)
+      await syncService.create('trips', newTrip);
       existingTrips.push(newTrip);
-      localStorage.setItem('trips', JSON.stringify(existingTrips));
       setTrips(existingTrips);
 
       alert(`✅ Trip "${formData.tripNumber}" created successfully!\n\nTrip Type: ${formData.tripType}\nVehicle: ${formData.vehicleType}\nStatus: ${formData.status}`);
@@ -269,9 +272,9 @@ export default function TripManagementForm() {
     }
   };
 
-  const handleAddExpense = () => {
+  const handleAddExpense = async () => {
     if (!selectedTripForExpense) return;
-    
+
     // Validation for fuel expenses
     if (expenseData.expenseType === 'Fuel') {
       if (!expenseData.fuelLiters || parseFloat(expenseData.fuelLiters) <= 0) {
@@ -283,41 +286,44 @@ export default function TripManagementForm() {
         return;
       }
     }
-    
+
     if (!expenseData.amount || parseFloat(expenseData.amount) <= 0) {
       alert('⚠️ Please enter a valid amount!');
       return;
     }
-    
+
     const existingTrips = JSON.parse(localStorage.getItem('trips') || '[]');
     const tripIndex = existingTrips.findIndex(t => t.id === selectedTripForExpense.id);
-    
+
     if (tripIndex !== -1) {
       const newExpense = {
         id: Date.now(),
         ...expenseData,
         addedAt: new Date().toISOString()
       };
-      
+
       if (!existingTrips[tripIndex].expenses) {
         existingTrips[tripIndex].expenses = [];
       }
-      
+
       existingTrips[tripIndex].expenses.push(newExpense);
       existingTrips[tripIndex].updatedAt = new Date().toISOString();
-      
+
       localStorage.setItem('trips', JSON.stringify(existingTrips));
       setTrips(existingTrips);
-      
-      const fuelInfo = expenseData.expenseType === 'Fuel' && expenseData.fuelLiters 
-        ? `\nFuel: ${expenseData.fuelLiters} Liters` 
+
+      // Sync update to backend
+      await syncService.update('trips', selectedTripForExpense.id, existingTrips[tripIndex]);
+
+      const fuelInfo = expenseData.expenseType === 'Fuel' && expenseData.fuelLiters
+        ? `\nFuel: ${expenseData.fuelLiters} Liters`
         : '';
-      const vendorInfo = expenseData.expenseType === 'Fuel' && expenseData.fuelVendor 
-        ? `\nVendor: ${fuelVendors.find(v => v.id.toString() === expenseData.fuelVendor)?.tradeName || 'N/A'}` 
+      const vendorInfo = expenseData.expenseType === 'Fuel' && expenseData.fuelVendor
+        ? `\nVendor: ${fuelVendors.find(v => v.id.toString() === expenseData.fuelVendor)?.tradeName || 'N/A'}`
         : '';
-      
+
       alert(`✅ Expense added to Trip ${selectedTripForExpense.tripNumber}!\n\nType: ${expenseData.expenseType}\nAmount: ₹${expenseData.amount}${fuelInfo}${vendorInfo}`);
-      
+
       setExpenseData({
         expenseType: 'Fuel',
         amount: '',
@@ -334,18 +340,21 @@ export default function TripManagementForm() {
     }
   };
 
-  const handleCloseTrip = (tripId) => {
+  const handleCloseTrip = async (tripId) => {
     const existingTrips = JSON.parse(localStorage.getItem('trips') || '[]');
     const tripIndex = existingTrips.findIndex(t => t.id === tripId);
-    
+
     if (tripIndex !== -1) {
       existingTrips[tripIndex].status = 'Closed';
       existingTrips[tripIndex].closedAt = new Date().toISOString();
       existingTrips[tripIndex].updatedAt = new Date().toISOString();
-      
+
       localStorage.setItem('trips', JSON.stringify(existingTrips));
       setTrips(existingTrips);
-      
+
+      // Sync update to backend
+      await syncService.update('trips', tripId, existingTrips[tripIndex]);
+
       alert(`✅ Trip ${existingTrips[tripIndex].tripNumber} has been closed!`);
     }
   };

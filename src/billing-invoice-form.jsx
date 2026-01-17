@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, FileText, DollarSign, Calendar, Printer, X } from 'lucide-react';
+import { Save } from 'lucide-react';
+import syncService from './services/syncService';
 
 export default function BillingForm() {
   const [allClients, setAllClients] = useState([]);
@@ -84,17 +85,17 @@ export default function BillingForm() {
     }
   }, [formData.client, allClients]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (formData.selectedLRs.length === 0) {
       alert('⚠️ Please select at least one LR!');
       return;
     }
 
     const existingInvoices = JSON.parse(localStorage.getItem('invoices') || '[]');
-    
-    const selectedLRDetails = lrBookings.filter(lr => 
+
+    const selectedLRDetails = lrBookings.filter(lr =>
       formData.selectedLRs.includes(lr.id)
     );
 
@@ -105,12 +106,13 @@ export default function BillingForm() {
       createdAt: new Date().toISOString()
     };
 
+    // Save using sync service (saves to localStorage AND syncs to backend)
+    await syncService.create('invoices', newInvoice);
     existingInvoices.push(newInvoice);
-    localStorage.setItem('invoices', JSON.stringify(existingInvoices));
     setInvoices(existingInvoices);
 
     alert(`✅ Invoice "${formData.invoiceNumber}" created successfully!\n\nClient: ${allClients.find(c => c.id.toString() === formData.client)?.companyName}\nTotal LRs: ${selectedLRDetails.length}\nAmount: ₹${formData.totalAmount.toFixed(2)}`);
-    
+
     setTimeout(() => {
       window.print();
     }, 500);

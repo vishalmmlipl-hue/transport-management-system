@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, DollarSign, Receipt, Building2, Calendar, User, FileText, Truck } from 'lucide-react';
+import { Save } from 'lucide-react';
 import { createBranchExpenseLedger } from './utils/ledgerService';
 
 export default function BranchExpenseForm() {

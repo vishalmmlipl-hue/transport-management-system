@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, Package, Truck, Calendar, Clock, Search, Printer, X } from 'lucide-react';
+import { CheckCircle, Package, Truck, Calendar, Search, Printer, X } from 'lucide-react';
 
 export default function ManifestReceiveForm() {
   const [manifests, setManifests] = useState([]);
@@ -10,7 +10,7 @@ export default function ManifestReceiveForm() {
   const [currentBranch, setCurrentBranch] = useState(null);
   const [filterStatus, setFilterStatus] = useState('Pending'); // Pending, Received, All
   const [searchTerm, setSearchTerm] = useState('');
-  const [lrReceiptData, setLrReceiptData] = useState({}); // Track individual LR receipts: { lrId: { received: bool, receivedPieces: number, discrepancy: string } }
+  const [, setLrReceiptData] = useState({}); // Track individual LR receipts: { lrId: { received: bool, receivedPieces: number, discrepancy: string } }
   const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
   const [selectedLRForDiscrepancy, setSelectedLRForDiscrepancy] = useState(null);
   const [showSearchModal, setShowSearchModal] = useState(false);

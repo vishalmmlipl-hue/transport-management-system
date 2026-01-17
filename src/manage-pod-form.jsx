@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Edit2, Save, X, CheckCircle, Package, Calendar, User, MapPin, Truck, Filter, Download } from 'lucide-react';
+import { Search, Edit2, Save, X, CheckCircle, Package, Calendar } from 'lucide-react';
 
 export default function ManagePODForm() {
   const [pods, setPods] = useState([]);
@@ -8,8 +8,8 @@ export default function ManagePODForm() {
   const [cities, setCities] = useState([]);
   const [manifests, setManifests] = useState([]);
   const [staff, setStaff] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [, setCurrentUser] = useState(null);
+  const [, setIsAdmin] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState('All'); // Single branch selection - default to "All"
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');

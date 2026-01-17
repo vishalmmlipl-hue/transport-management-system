@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Save, Plus, Trash2, User } from 'lucide-react';
+import syncService from './services/syncService';
 
 export default function ClientMasterForm() {
   const [formData, setFormData] = useState({
@@ -43,14 +44,14 @@ export default function ClientMasterForm() {
     remarks: ''
   });
 
-  const [showAdditionalContact, setShowAdditionalContact] = useState(false);
+  const [, setShowAdditionalContact] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     // Get existing clients from localStorage
     const existingClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-    
+
     // Create new client object
     const newClient = {
       id: Date.now(), // Simple ID generation
@@ -70,13 +71,10 @@ export default function ClientMasterForm() {
       remarks: formData.remarks,
       createdAt: new Date().toISOString()
     };
-    
-    // Add to existing clients
-    existingClients.push(newClient);
-    
-    // Save to localStorage
-    localStorage.setItem('tbbClients', JSON.stringify(existingClients));
-    
+
+    // Save using sync service (saves to localStorage AND syncs to backend)
+    await syncService.create('tbbClients', newClient);
+
     // Also save to clients storage for sundry creditors
     const allClients = JSON.parse(localStorage.getItem('clients') || '[]');
     const clientExists = allClients.find(c => c.id === newClient.id);
@@ -84,13 +82,13 @@ export default function ClientMasterForm() {
       allClients.push(newClient);
       localStorage.setItem('clients', JSON.stringify(allClients));
     }
-    
+
     // Dispatch custom event to notify other components
     window.dispatchEvent(new Event('clientDataUpdated'));
-    
+
     console.log('Client Master Data:', newClient);
     alert(`Client "${formData.companyName}" created successfully!\n\nClient Code: ${newClient.code}\n\nThis client is now available for selection in LR booking forms.`);
-    
+
     // Reset form
     window.location.reload();
   };

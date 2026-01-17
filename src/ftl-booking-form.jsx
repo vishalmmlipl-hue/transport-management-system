@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Calculator, Printer, Search, Edit2 } from 'lucide-react';
+import { Plus, Trash2, Printer } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
 import { createSundryCreditorLedger } from './utils/ledgerService.js';
+import syncService from './services/syncService';
 
 export default function FTLBookingForm() {
   // Load TBB clients from localStorage
@@ -18,7 +19,7 @@ export default function FTLBookingForm() {
   const [selectedOrigin, setSelectedOrigin] = useState(null);
   const [selectedDestination, setSelectedDestination] = useState(null);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
-  const [selectedBranch, setSelectedBranch] = useState(null);
+  const [, setSelectedBranch] = useState(null);
 
   // Get current user
   const [currentUser, setCurrentUser] = useState(null);
@@ -118,6 +119,7 @@ export default function FTLBookingForm() {
 
   useEffect(() => {
     calculateTotals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.charges, formData.cftDimensions]);
 
   // Fetch rate from Client Rate Master for TBB payment mode
@@ -368,6 +370,7 @@ export default function FTLBookingForm() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.bookingMode, formData.paymentMode, formData.tbbClient, clientRates, cities, tbbClients]);
 
   // Auto-update pieces and weight from pickup/delivery points for FTL mode
@@ -377,19 +380,20 @@ export default function FTLBookingForm() {
                          formData.deliveryPoints.reduce((sum, p) => sum + (parseFloat(p.pieces) || 0), 0);
       const totalQuantity = formData.pickupPoints.reduce((sum, p) => sum + (parseFloat(p.quantity) || 0), 0) +
                            formData.deliveryPoints.reduce((sum, p) => sum + (parseFloat(p.quantity) || 0), 0);
-      
+
       // Only auto-update if fields are empty or match the calculated total
       const currentPieces = parseFloat(formData.pieces) || 0;
       const currentWeight = parseFloat(formData.weight) || 0;
-      
+
       if (totalPieces > 0 && (currentPieces === 0 || currentPieces === totalPieces)) {
         setFormData(prev => ({ ...prev, pieces: totalPieces.toString() }));
       }
-      
+
       if (totalQuantity > 0 && (currentWeight === 0 || Math.abs(currentWeight - totalQuantity) < 0.01)) {
         setFormData(prev => ({ ...prev, weight: totalQuantity.toFixed(2) }));
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.bookingMode, formData.pickupPoints, formData.deliveryPoints, formData.pieces, formData.weight]);
 
   // Load current user and set admin status
@@ -640,6 +644,7 @@ export default function FTLBookingForm() {
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.paymentMode, formData.charges.rate, formData.charges.calculationMethod, formData.pieces, formData.weight, formData.calculatedCFT, formData.cftDimensions]);
 
   // Calculate balance freight for FTL mode
@@ -662,6 +667,7 @@ export default function FTLBookingForm() {
     }
   }, [formData.bookingMode, formData.charges.freightRate, formData.charges.advanceFreight, formData.charges.agentCommission, formData.charges.tdsDeducted]);
 
+  // eslint-disable-next-line no-unused-vars
   const calculateCFT = () => {
     const { length, width, height, unit, factor } = formData.cftDimensions;
     if (!length || !width || !height) return 0;
@@ -686,6 +692,7 @@ export default function FTLBookingForm() {
   };
 
   // Calculate CFT Weight using the specified formulas
+  // eslint-disable-next-line no-unused-vars
   const calculateCFTWeight = () => {
     const { length, width, height, unit, factor } = formData.cftDimensions;
     if (!length || !width || !height) return 0;
@@ -954,11 +961,10 @@ export default function FTLBookingForm() {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Save LR to localStorage
-    const existingLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+
+    // Save LR using sync service (saves to localStorage AND syncs to backend)
     const newLR = {
       id: Date.now(),
       ...formData,
@@ -966,10 +972,9 @@ export default function FTLBookingForm() {
       status: 'Booked',
       createdAt: new Date().toISOString()
     };
-    
-    existingLRs.push(newLR);
-    localStorage.setItem('lrBookings', JSON.stringify(existingLRs));
-    
+
+    await syncService.create('lrBookings', newLR);
+
     // Create ledger entries for Sundry Creditor payment mode
     if (formData.paymentMode === 'SundryCreditor') {
       try {
@@ -978,7 +983,7 @@ export default function FTLBookingForm() {
         console.error('Error creating Sundry Creditor ledger entries:', error);
       }
     }
-    
+
     // Update FTL Inquiry with LR booking reference if inquiry exists
     const selectedInquiryData = localStorage.getItem('selectedFTLInquiry');
     if (selectedInquiryData) {
@@ -990,16 +995,17 @@ export default function FTLBookingForm() {
             ? { ...i, lrBookingId: newLR.id, lrNumber: newLR.lrNumber }
             : i
         );
+        await syncService.update('ftlInquiries', inquiry.id, { lrBookingId: newLR.id, lrNumber: newLR.lrNumber });
         localStorage.setItem('ftlInquiries', JSON.stringify(updatedInquiries));
         localStorage.removeItem('selectedFTLInquiry');
       } catch (error) {
         console.error('Error updating inquiry:', error);
       }
     }
-    
+
     setSavedLRId(newLR.id);
     setShowPrintView(true);
-    
+
     alert('✅ LR Booking saved successfully! Opening print view...');
   };
 

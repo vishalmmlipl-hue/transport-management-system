@@ -4,7 +4,7 @@ import { Printer, X } from 'lucide-react';
 export default function LRPrintView({ lrId, onClose }) {
   const [lrData, setLrData] = useState(null);
   const [cities, setCities] = useState([]);
-  const [branches, setBranches] = useState([]);
+  const [, setBranches] = useState([]);
   const [tbbClients, setTbbClients] = useState([]);
   const [clientRates, setClientRates] = useState([]);
   const [showAmountsInPrint, setShowAmountsInPrint] = useState(true);

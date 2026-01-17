@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart, TrendingUp, Package, Truck, FileText, DollarSign, Users, Calendar, Download, Building2, Filter } from 'lucide-react';
+import { Package, Truck, FileText, DollarSign, Download } from 'lucide-react';
 
 export default function ReportsDashboard() {
   const [lrBookings, setLrBookings] = useState([]);
@@ -13,7 +13,7 @@ export default function ReportsDashboard() {
   const [branches, setBranches] = useState([]);
   const [manifests, setManifests] = useState([]);
   const [cities, setCities] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState(null);
   const [reportType, setReportType] = useState('LR Bookings');
