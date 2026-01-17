@@ -765,6 +765,9 @@ export default function TripManagementForm() {
               // Normalize common "id-ish" fields to avoid storing whole objects
               if (['ownedVehicle', 'ownedDriver', 'secondDriver', 'parentTripId', 'selectedManifest', 'origin', 'destination', 'originBranch', 'vendor'].includes(key)) {
                 dataColumn[key] = normalizeId(tripData[key]);
+              } else if (key === 'selectedLRs' && Array.isArray(tripData[key])) {
+                // Ensure we store LR IDs (not objects)
+                dataColumn[key] = tripData[key].map(normalizeId).filter(Boolean);
               } else {
                 dataColumn[key] = tripData[key];
               }
@@ -2051,14 +2054,16 @@ export default function TripManagementForm() {
                   ? trips
                       .filter(trip => {
                         // Exclude current trip if editing
-                        if (formData.id && trip.id === formData.id) return false;
+                        if (formData.id && trip?.id?.toString?.() === formData.id.toString()) return false;
                         // Only include trips with selectedManifest
                         return trip.selectedManifest;
                       })
                       .map(trip => {
                         // Handle both string and number IDs
                         const manifestId = trip.selectedManifest;
-                        return manifestId ? manifestId.toString() : null;
+                        if (!manifestId) return null;
+                        if (typeof manifestId === 'object' && manifestId.id != null) return String(manifestId.id);
+                        return String(manifestId);
                       })
                       .filter(id => id !== null)
                   : [];
@@ -2127,9 +2132,18 @@ export default function TripManagementForm() {
               
               {(() => {
                 // Get LRs already assigned to trips (excluding current trip if editing)
-                const assignedLRIds = trips
-                  .filter(trip => trip.id !== formData.id && trip.selectedLRs && trip.selectedLRs.length > 0)
-                  .flatMap(trip => trip.selectedLRs.map(id => id.toString()));
+                const assignedLRIds = (trips || [])
+                  .filter(trip => {
+                    const sameTrip = formData.id && trip?.id?.toString?.() === formData.id.toString();
+                    if (sameTrip) return false;
+                    return trip.selectedLRs && Array.isArray(trip.selectedLRs) && trip.selectedLRs.length > 0;
+                  })
+                  .flatMap(trip => (trip.selectedLRs || []).map(v => {
+                    if (v === null || v === undefined) return null;
+                    if (typeof v === 'object' && v.id != null) return String(v.id);
+                    return String(v);
+                  }))
+                  .filter(Boolean);
                 
                 // Filter out assigned LRs
                 const availableLRs = lrBookings.filter(lr => 
@@ -2147,25 +2161,27 @@ export default function TripManagementForm() {
                         {assignedLRIds.length} LR(s) already assigned to other trips
                       </div>
                     )}
-                    {availableLRs.map(lr => (
+                    {availableLRs.map(lr => {
+                      const isSelected = (formData.selectedLRs || []).some(id => String(id) === String(lr.id));
+                      return (
                   <div key={lr.id} style={{
                     padding: '12px',
                     border: '2px solid #e2e8f0',
                     borderRadius: '8px',
                     marginBottom: '8px',
                     cursor: 'pointer',
-                    background: formData.selectedLRs.includes(lr.id) ? '#dbeafe' : 'white'
+                    background: isSelected ? '#dbeafe' : 'white'
                   }}
                   onClick={() => {
-                    if (formData.selectedLRs.includes(lr.id)) {
+                    if (isSelected) {
                       setFormData(prev => ({
                         ...prev,
-                        selectedLRs: prev.selectedLRs.filter(id => id !== lr.id)
+                        selectedLRs: (prev.selectedLRs || []).filter(id => String(id) !== String(lr.id))
                       }));
                     } else {
                       setFormData(prev => ({
                         ...prev,
-                        selectedLRs: [...prev.selectedLRs, lr.id]
+                        selectedLRs: [...(prev.selectedLRs || []), lr.id]
                       }));
                     }
                   }}
@@ -2188,7 +2204,8 @@ export default function TripManagementForm() {
                       </div>
                     </div>
                   </div>
-                ))}
+                      );
+                    })}
                 </div>
                 );
               })()}
