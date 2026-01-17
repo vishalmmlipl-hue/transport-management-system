@@ -534,13 +534,14 @@ export default function ReportsDashboard() {
     });
 
     const headers = [
-      'LR Number', 'Booking Date', 'Branch', 'Consignor Name', 'Consignor Contact',
+      'LR Number', 'Ref No', 'Booking Date', 'Branch', 'Consignor Name', 'Consignor Contact',
       'Consignee Name', 'Consignee Contact', 'Origin', 'Destination', 'Pieces',
       'Weight (kg)', 'Amount', 'Payment Mode', 'Status', 'Expected Delivery Date'
     ];
     
     const rows = filteredLRs.map(lr => [
       lr.lrNumber || '',
+      lr.referenceNumber || '-',
       lr.bookingDate || '',
       getLROriginBranch(lr)?.branchName || 'N/A',
       lr.consignor?.name || '',
@@ -867,7 +868,7 @@ export default function ReportsDashboard() {
     const tbbLRs = filteredLRs.filter(lr => lr.paymentMode === 'TBB');
 
     const headers = [
-      'Payment Mode', 'LR Number', 'Booking Date', 'Branch', 'Consignor Name', 
+      'Payment Mode', 'LR Number', 'Ref No', 'Booking Date', 'Branch', 'Consignor Name', 
       'Consignor Contact', 'Consignee Name', 'Consignee Contact', 'Origin', 
       'Destination', 'Pieces', 'Weight (kg)', 'Amount', 'Status', 'Expected Delivery Date'
     ];
@@ -884,6 +885,7 @@ export default function ReportsDashboard() {
     const formatLRRow = (lr, paymentMode) => [
       paymentMode,
       lr.lrNumber || '',
+      lr.referenceNumber || '-',
       lr.bookingDate || '',
       getLROriginBranch(lr)?.branchName || 'N/A',
       lr.consignor?.name || '',
@@ -981,7 +983,7 @@ export default function ReportsDashboard() {
     };
 
     const headers = [
-      'Client Code', 'Client Name', 'LR Number', 'Booking Date', 'Branch', 
+      'Client Code', 'Client Name', 'LR Number', 'Ref No', 'Booking Date', 'Branch', 
       'Consignor Name', 'Consignee Name', 'Origin', 'Destination', 
       'Pieces', 'Weight (kg)', 'Freight Amount', 'Total Amount', 'Status'
     ];
@@ -995,6 +997,7 @@ export default function ReportsDashboard() {
           group.clientCode,
           group.clientName,
           lr.lrNumber || '',
+          lr.referenceNumber || '-',
           lr.bookingDate || '',
           getLROriginBranch(lr)?.branchName || 'N/A',
           lr.consignor?.name || '',
@@ -1107,13 +1110,14 @@ export default function ReportsDashboard() {
     };
 
     const headers = [
-      'Category', 'LR Number', 'Booking Date', 'Branch', 'Consignor', 'Consignee',
+      'Category', 'LR Number', 'Ref No', 'Booking Date', 'Branch', 'Consignor', 'Consignee',
       'Origin', 'Destination', 'Pieces', 'Weight (kg)', 'Total Amount (INR)', 'Payment Mode', 'Status'
     ];
 
     const formatLRRow = (lr, category) => [
       category,
       lr.lrNumber || '',
+      lr.referenceNumber || '-',
       lr.bookingDate || '',
       getLROriginBranch(lr)?.branchName || 'N/A',
       lr.consignor?.name || '',

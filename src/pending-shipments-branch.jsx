@@ -17,21 +17,91 @@ export default function PendingShipmentsBranch() {
   const [expandedLR, setExpandedLR] = useState(null); // Track which LR has POD form expanded
   const [podFormData, setPodFormData] = useState({}); // Store POD form data for each LR
 
-  const loadData = () => {
-    // Load data
-    setLrBookings(JSON.parse(localStorage.getItem('lrBookings') || '[]'));
-    setManifests(JSON.parse(localStorage.getItem('manifests') || '[]'));
-    setTrips(JSON.parse(localStorage.getItem('trips') || '[]'));
-    setVehicles(JSON.parse(localStorage.getItem('vehicles') || '[]'));
-    setBranches(JSON.parse(localStorage.getItem('branches') || '[]'));
-    setCities(JSON.parse(localStorage.getItem('cities') || '[]'));
-    setPods(JSON.parse(localStorage.getItem('pods') || '[]'));
+  const loadData = async () => {
+    try {
+      // Import syncService
+      const syncService = (await import('./utils/sync-service')).default;
+      
+      // Load from API server
+      const [lrResult, manifestsResult, tripsResult, vehiclesResult, branchesResult, citiesResult, podsResult] = await Promise.all([
+        syncService.load('lrBookings'),
+        syncService.load('manifests'),
+        syncService.load('trips'),
+        syncService.load('vehicles'),
+        syncService.load('branches'),
+        syncService.load('cities'),
+        syncService.load('pods')
+      ]);
+      
+      // Combine LR sources (FTL + PTL + regular)
+      const ftlLRs = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
+      const ptlLRs = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+      const allLRs = [
+        ...(lrResult?.data || []),
+        ...ftlLRs,
+        ...ptlLRs
+      ];
+      const uniqueLRs = allLRs.filter((lr, index, self) => 
+        index === self.findIndex(t => t.id?.toString() === lr.id?.toString())
+      );
+      
+      // Normalize manifests selectedLRs to arrays
+      const allManifests = Array.isArray(manifestsResult) ? manifestsResult : (manifestsResult?.data || []);
+      const normalizedManifests = allManifests.map(manifest => {
+        const manifestCopy = { ...manifest };
+        if (manifestCopy.selectedLRs) {
+          if (typeof manifestCopy.selectedLRs === 'string') {
+            try {
+              manifestCopy.selectedLRs = JSON.parse(manifestCopy.selectedLRs);
+            } catch (e) {
+              manifestCopy.selectedLRs = [];
+            }
+          }
+          if (!Array.isArray(manifestCopy.selectedLRs)) {
+            manifestCopy.selectedLRs = [];
+          }
+        } else {
+          manifestCopy.selectedLRs = [];
+        }
+        return manifestCopy;
+      });
+      
+      const activeBranches = (branchesResult?.data || []).filter(b => b.status === 'Active');
+      
+      setLrBookings(uniqueLRs);
+      setManifests(normalizedManifests);
+      setTrips(Array.isArray(tripsResult) ? tripsResult : (tripsResult?.data || []));
+      setVehicles((vehiclesResult?.data || []).filter(v => v.status === 'Active'));
+      setBranches(activeBranches);
+      setCities(citiesResult?.data || []);
+      setPods(Array.isArray(podsResult) ? podsResult : (podsResult?.data || []));
+      
+      console.log('✅ Pending shipments data loaded:', {
+        lrs: uniqueLRs.length,
+        manifests: normalizedManifests.length,
+        trips: tripsResult?.data?.length || 0,
+        branches: activeBranches.length
+      });
+      
+      return activeBranches; // Return branches for use in useEffect
+    } catch (error) {
+      console.error('Error loading data for pending shipments:', error);
+      // Fallback to localStorage
+      setLrBookings(JSON.parse(localStorage.getItem('lrBookings') || '[]'));
+      setManifests(JSON.parse(localStorage.getItem('manifests') || '[]'));
+      setTrips(JSON.parse(localStorage.getItem('trips') || '[]'));
+      setVehicles(JSON.parse(localStorage.getItem('vehicles') || '[]'));
+      const fallbackBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+      setBranches(fallbackBranches);
+      setCities(JSON.parse(localStorage.getItem('cities') || '[]'));
+      setPods(JSON.parse(localStorage.getItem('pods') || '[]'));
+      
+      return fallbackBranches; // Return fallback branches
+    }
   };
 
   useEffect(() => {
-    loadData();
-
-    // Get current user
+    // Get current user first
     const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
     setCurrentUser(user);
 
@@ -42,41 +112,54 @@ export default function PendingShipmentsBranch() {
     const adminStatus = userRole === 'Admin' || userRole === 'admin';
     setIsAdmin(adminStatus);
 
-    // Auto-select branch for non-admin users
-    if (user && !adminStatus) {
-      let userBranchId = null;
-      if (systemUser && systemUser.branch) {
-        userBranchId = systemUser.branch;
-      } else if (user.branch) {
-        userBranchId = user.branch;
-      }
+    // Load data (includes branches) and auto-select branch for non-admin users
+    loadData().then((loadedBranches) => {
+      // After data is loaded, auto-select branch for non-admin users
+      if (user && !adminStatus) {
+        let userBranchId = null;
+        if (systemUser && systemUser.branch) {
+          userBranchId = systemUser.branch;
+        } else if (user.branch) {
+          userBranchId = user.branch;
+        }
 
-      if (userBranchId) {
-        const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-        const branch = allBranches.find(b => 
-          b.id.toString() === userBranchId.toString() || 
-          b.branchCode === userBranchId
-        );
-        if (branch) {
-          setSelectedBranch(branch);
+        if (userBranchId && loadedBranches && loadedBranches.length > 0) {
+          const branch = loadedBranches.find(b => 
+            b.id.toString() === userBranchId.toString() || 
+            b.branchCode === userBranchId
+          );
+          if (branch) {
+            setSelectedBranch(branch);
+            console.log('✅ Auto-selected branch for user:', branch.branchName);
+          } else {
+            console.warn('⚠️ User branch not found:', userBranchId, 'Available branches:', loadedBranches.map(b => `${b.id} (${b.branchName})`));
+          }
         }
       }
-    }
+    });
 
-    // Listen for storage changes for real-time sync
-    const handleStorageChange = () => {
+    // Listen for manifest updates (when manifests are received)
+    const handleManifestUpdated = () => {
+      console.log('🔄 Manifest updated event received, reloading pending shipments...');
+      loadData();
+    };
+    
+    const handleDataSync = () => {
+      console.log('🔄 Data sync event received, reloading pending shipments...');
       loadData();
     };
 
-    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('manifestUpdated', handleManifestUpdated);
+    window.addEventListener('dataSyncedFromServer', handleDataSync);
     
-    // Also poll for changes every 2 seconds for real-time sync
+    // Poll for changes every 5 seconds (less frequent than before)
     const pollInterval = setInterval(() => {
       loadData();
-    }, 2000);
+    }, 5000);
 
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('manifestUpdated', handleManifestUpdated);
+      window.removeEventListener('dataSyncedFromServer', handleDataSync);
       clearInterval(pollInterval);
     };
   }, []);
@@ -93,8 +176,19 @@ export default function PendingShipmentsBranch() {
 
     // Try to determine from LR destinations
     if (manifest.selectedLRs && manifest.selectedLRs.length > 0) {
-      const firstLR = manifest.selectedLRs[0];
-      const lrData = typeof firstLR === 'object' ? firstLR : 
+      let lrArray = manifest.selectedLRs;
+      // Handle stringified JSON
+      if (typeof lrArray === 'string') {
+        try {
+          lrArray = JSON.parse(lrArray);
+        } catch (e) {
+          return null;
+        }
+      }
+      if (!Array.isArray(lrArray) || lrArray.length === 0) return null;
+      
+      const firstLR = lrArray[0];
+      const lrData = typeof firstLR === 'object' && firstLR !== null ? firstLR : 
                      lrBookings.find(lr => lr.id.toString() === firstLR.toString());
       
       if (lrData && lrData.destination) {
@@ -170,11 +264,16 @@ export default function PendingShipmentsBranch() {
     );
 
     if (!manifest) {
-      // Check if LR belongs to selected branch (pending for dispatch)
+      // Not manifested - pending for dispatch from origin branch
       const lrBranch = branches.find(b => 
         b.id.toString() === lr.branch?.toString() || 
         b.branchCode === lr.branch
       );
+      
+      // For "All Branches" view, always show as "Pending for Dispatch" if not manifested
+      if (!selectedBranch && isAdmin) {
+        return { status: 'Pending for Dispatch', color: '#f59e0b', icon: Clock, branch: lrBranch };
+      }
       
       if (selectedBranch && lrBranch && (
         lrBranch.id.toString() === selectedBranch.id.toString() ||
@@ -211,16 +310,25 @@ export default function PendingShipmentsBranch() {
       destBranch.branchCode === selectedBranch.branchCode
     );
 
-    if (!isForSelectedBranch) {
-      return { status: 'Manifested - Other Branch', color: '#94a3b8', icon: AlertCircle };
+    // Check if manifest is received
+    const isReceived = manifest.receivedAt || manifest.status === 'Received';
+    const lrReceipt = manifest.lrReceipts?.[lr.id];
+    const isLRReceived = lrReceipt?.received;
+
+    if (isReceived || isLRReceived) {
+      // Manifest received - check if LR is delivered
+      if (lrReceipt?.received) {
+        return { status: 'Pending Delivery', color: '#f59e0b', icon: Clock, branch: destBranch };
+      }
     }
 
-    // Check if manifest is received
-    if (manifest.receivedAt || manifest.status === 'Received') {
-      const lrReceipt = manifest.lrReceipts?.[lr.id];
-      if (lrReceipt?.received) {
-        return { status: 'Pending Delivery', color: '#f59e0b', icon: Clock };
-      }
+    // For "All Branches" view, show manifested status regardless of destination branch
+    if (!selectedBranch && isAdmin) {
+      return { status: 'Manifested', color: '#8b5cf6', icon: Package, branch: destBranch };
+    }
+
+    if (!isForSelectedBranch) {
+      return { status: 'Manifested - Other Branch', color: '#94a3b8', icon: AlertCircle };
     }
 
     // Manifested but no trip
@@ -263,7 +371,7 @@ export default function PendingShipmentsBranch() {
           return isLRFromBranch;
         }
       }
-      // Admin with no branch selected sees all
+      // Admin with no branch selected (All Branches) sees all
       return true;
     }
     
@@ -325,12 +433,52 @@ export default function PendingShipmentsBranch() {
       );
 
       // Find manifest containing this LR
-      const manifest = manifests.find(m => 
-        m.selectedLRs?.some(mlr => {
-          const mlrId = typeof mlr === 'object' ? mlr.id : mlr;
-          return mlrId === lr.id;
-        })
-      );
+      const manifest = manifests.find(m => {
+        if (!m.selectedLRs) return false;
+        let lrArray = m.selectedLRs;
+        // Handle stringified JSON
+        if (typeof lrArray === 'string') {
+          try {
+            lrArray = JSON.parse(lrArray);
+          } catch (e) {
+            return false;
+          }
+        }
+        if (!Array.isArray(lrArray)) return false;
+        return lrArray.some(mlr => {
+          const mlrId = typeof mlr === 'object' && mlr !== null ? mlr.id : mlr;
+          return mlrId?.toString() === lr.id?.toString();
+        });
+      });
+
+      // For admin with "All Branches" selected (selectedBranch is null)
+      if (isAdmin && !selectedBranch) {
+        // Show all pending shipments from all branches:
+        // 1. Not manifested: show from origin branch (where LR was booked)
+        // 2. Manifested but not received: show for destination branch
+        // 3. Received: show delivered or undelivered status
+        
+        // Filter by status
+        if (filterStatus === 'Pending Dispatch') {
+          // Show only not manifested LRs (pending dispatch from origin branch)
+          return !manifest && (lrStatus.status === 'Pending for Dispatch' || lrStatus.status === 'Not Manifested');
+        } else if (filterStatus === 'Manifested') {
+          // Show manifested but not received
+          return manifest && (lrStatus.status === 'Manifested' || lrStatus.status === 'Manifested - Other Branch');
+        } else if (filterStatus === 'In Transit') {
+          return lrStatus.status === 'In Transit - Trip Created';
+        } else if (filterStatus === 'Delivered') {
+          return lrStatus.status === 'Delivered - POD Uploaded' || lrStatus.status === 'Delivered';
+        }
+        // For "All" status, show all pending shipments:
+        // - Not manifested (pending dispatch from origin)
+        // - Manifested but not received (pending at destination)
+        // - Received but not delivered (pending delivery)
+        // - In transit
+        // Exclude only fully delivered ones
+        const isFullyDelivered = lrStatus.status === 'Delivered - POD Uploaded' || lrStatus.status === 'Delivered';
+        return !isFullyDelivered || lrStatus.status === 'Pending Delivery';
+      }
 
       // Include if:
       // 1. Pending for dispatch (not manifested, from this branch)
@@ -360,7 +508,7 @@ export default function PendingShipmentsBranch() {
           // Admin with branch selected: show if booked by OR received by selected branch
           if (!isForSelectedBranch && !isLRFromBranch) return false;
         }
-        // Admin with no branch selected: show all (already filtered by isLRAccessible)
+        // Admin with no branch selected: already handled above
       } else {
         // For branch users: only show their branch (destination or origin)
         // This is already handled by isLRAccessible, but double-check
@@ -649,11 +797,13 @@ export default function PendingShipmentsBranch() {
                 }}
               >
                 <option value="all">All Branches</option>
-                {branches.filter(b => b.status === 'Active').map(branch => (
+                {branches.length > 0 ? branches.filter(b => b.status === 'Active').map(branch => (
                   <option key={branch.id} value={branch.id}>
-                    {branch.branchName} - {branch.city}
+                    {branch.branchName} {branch.address?.city ? `- ${branch.address.city}` : branch.city ? `- ${branch.city}` : ''}
                   </option>
-                ))}
+                )) : (
+                  <option value="" disabled>Loading branches...</option>
+                )}
               </select>
             </div>
           )}
@@ -672,7 +822,7 @@ export default function PendingShipmentsBranch() {
                 <div>
                   <strong style={{ color: '#1e40af' }}>Current Branch:</strong>
                   <span style={{ marginLeft: '8px', color: '#1e3a8a' }}>
-                    {selectedBranch.branchName} - {selectedBranch.city}, {selectedBranch.state}
+                    {selectedBranch.branchName} {selectedBranch.address?.city ? `- ${selectedBranch.address.city}` : selectedBranch.city ? `- ${selectedBranch.city}` : ''} {selectedBranch.address?.state ? `, ${selectedBranch.address.state}` : selectedBranch.state ? `, ${selectedBranch.state}` : ''}
                   </span>
                 </div>
               </div>

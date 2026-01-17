@@ -1,8 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Save, Trash2, AlertCircle, Lock, Edit2, Printer, Search, Eye, Calculator, Plus, Home, ArrowLeft } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
+import { useLRBookings } from './hooks/useDataSync';
+import { apiService } from './utils/apiService';
+import syncService from './utils/sync-service';
+
+const parseMaybeJson = (value) => {
+  if (value == null) return value;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return value;
+  const t = value.trim();
+  if (!t) return value;
+  try { return JSON.parse(t); } catch { return value; }
+};
 
 export default function LRModifyForm() {
+  // Use API hook for LR bookings
+  const { data: allLRBookings, loading: lrLoading, loadData: loadLRBookings } = useLRBookings();
+  
   const [lrBookings, setLrBookings] = useState([]);
   const [manifests, setManifests] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -18,6 +33,7 @@ export default function LRModifyForm() {
   const [showPrintView, setShowPrintView] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLRId, setSelectedLRId] = useState(null);
+  const [selectedLRKey, setSelectedLRKey] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [userBranch, setUserBranch] = useState(null);
@@ -67,7 +83,16 @@ export default function LRModifyForm() {
     } else {
       setUserBranch(null); // Admin can see all branches
     }
-  }, []);
+    
+    // Load LR data from API
+    loadLRData();
+  }, [isAdmin, userBranch]);
+  
+  // Update lrBookings when allLRBookings changes
+  useEffect(() => {
+    // LR list is loaded via loadLRData (combines lrBookings + ptlLRBookings + ftlLRBookings).
+    // Do not overwrite combined list from hook updates.
+  }, [allLRBookings, isAdmin, userBranch]);
 
   // Helper function to check if LR belongs to user's branch
   const isLRFromUserBranch = (lr) => {
@@ -79,88 +104,230 @@ export default function LRModifyForm() {
     return lrBranch?.toString() === userBranch.toString();
   };
 
-  const loadLRData = () => {
-    const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const allInvoices = JSON.parse(localStorage.getItem('invoices') || '[]');
-    const allPods = JSON.parse(localStorage.getItem('pods') || '[]');
-    const allClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-    const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const allClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-    
-    // Filter LRs by branch for non-admin users
-    const filteredLRs = isAdmin ? allLRs : allLRs.filter(lr => isLRFromUserBranch(lr));
-    
-    setLrBookings(filteredLRs);
-    setManifests(allManifests);
-    setInvoices(allInvoices);
-    setPods(allPods);
-    setTbbClients(allClients.filter(c => c.status === 'Active'));
-    setCities(allCities);
-    setBranches(allBranches);
-    setClientRates(allClientRates.filter(r => r.status === 'Active'));
+  const loadLRData = async () => {
+    try {
+      // Load all LR tables + other data from API
+      const [
+        baseLRs,
+        ptlLRs,
+        ftlLRs,
+        allManifests,
+        allInvoices,
+        allPods,
+        allClients,
+        allCities,
+        allBranches,
+        allClientRates
+      ] = await Promise.all([
+        apiService.getLRBookings().catch(() => []),
+        apiService.getPTLLRBookings().catch(() => []),
+        apiService.getFTLLRBookings().catch(() => []),
+        apiService.getManifests().catch(() => []),
+        apiService.getInvoices().catch(() => []),
+        apiService.getPODs().catch(() => []),
+        apiService.getClients().catch(() => []),
+        apiService.getCities().catch(() => []),
+        apiService.getBranches().catch(() => []),
+        syncService.load('clientRates').catch(() => ({ data: [] }))
+      ]);
 
-    // Get LR ID from sessionStorage (set by search component) or selectedLRId
-    const editLRId = sessionStorage.getItem('editLRId') || selectedLRId;
-    if (editLRId) {
-      const lr = allLRs.find(l => l.id.toString() === editLRId.toString());
-      if (lr) {
-        // Check if user has permission to view this LR
-        const lrBranch = lr.branch || lr.bookingBranch;
-        const canView = isAdmin || !userBranch || lrBranch?.toString() === userBranch.toString();
-        
-        if (!canView) {
-          alert('⚠️ You can only view LRs booked by your branch.');
-          sessionStorage.removeItem('editLRId');
-          return;
+      const combinedLRs = [
+        ...(baseLRs || []).map(lr => ({ ...lr, __table: 'lrBookings', bookingMode: lr.bookingMode || 'PTL', __key: `lrBookings:${lr.id}` })),
+        ...(ptlLRs || []).map(lr => ({ ...lr, __table: 'ptlLRBookings', bookingMode: 'PTL', __key: `ptlLRBookings:${lr.id}` })),
+        ...(ftlLRs || []).map(lr => ({ ...lr, __table: 'ftlLRBookings', bookingMode: 'FTL', __key: `ftlLRBookings:${lr.id}` })),
+      ];
+      
+      // Filter LRs by branch for non-admin users and exclude deleted LRs
+      const filteredLRs = (isAdmin ? combinedLRs : (combinedLRs || []).filter(lr => isLRFromUserBranch(lr)))
+        .filter(lr => {
+          // Exclude deleted LRs
+          return lr.status !== 'Deleted' && !lr.deletedAt && lr.status !== 'deleted';
+        });
+      
+      setLrBookings(filteredLRs || []);
+      setManifests(allManifests || []);
+      setInvoices(allInvoices || []);
+      setPods(allPods || []);
+      setTbbClients((allClients || []).filter(c => c.status === 'Active'));
+      setCities(allCities || []);
+      setBranches(allBranches || []);
+      const rawRates = Array.isArray(allClientRates) ? allClientRates : (allClientRates?.data || []);
+      const hydratedRates = (rawRates || []).map(r => {
+        const payload = parseMaybeJson(r?.data);
+        if (payload && typeof payload === 'object') {
+          return { ...payload, id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, clientId: payload.clientId ?? r.clientId, clientCode: payload.clientCode ?? r.clientCode };
         }
-        
-        setCurrentLR(lr);
-        setFormData({ ...lr });
-        setViewMode('view'); // Reset to view mode when loading LR
-        checkEditPermissions(lr, allManifests, allInvoices, allPods);
-        
-        // Initialize refs with current LR values
-        lastPieces.current = parseFloat(lr.pieces) || 0;
-        lastWeight.current = parseFloat(lr.weight) || 0;
-        lastCFT.current = parseFloat(lr.calculatedCFT) || 0;
-        lastRate.current = parseFloat(lr.charges?.rate) || 0;
-        lastCalculationMethod.current = lr.charges?.calculationMethod || 'by-weight';
-        lastCalculatedFreight.current = parseFloat(lr.charges?.freightRate) || 0;
-        isFreightManual.current = false;
-        
-        // Set selected origin and destination cities
-        if (lr.origin) {
-          const originCity = allCities.find(c => c.id?.toString() === lr.origin?.toString() || c.code === lr.origin);
-          if (originCity) {
-            setSelectedOrigin(originCity);
-            setOriginSearch(originCity.cityName);
+        return r;
+      });
+      setClientRates((hydratedRates || []).filter(r => (r.status === 'Active' || !r.status)));
+
+      // Get LR key from sessionStorage (set by search component) or selected key/id
+      const editKey = sessionStorage.getItem('editLRKey') || selectedLRKey || sessionStorage.getItem('editLRId') || selectedLRId;
+      if (editKey) {
+        let lr = null;
+        if (String(editKey).includes(':')) {
+          const [tbl, id] = String(editKey).split(':');
+          lr = (filteredLRs || []).find(l => l.__table === tbl && l.id && l.id.toString() === id.toString());
+        } else {
+          lr = (filteredLRs || []).find(l => l.id && l.id.toString() === String(editKey));
+        }
+        if (lr) {
+          // Check if user has permission to view this LR
+          const lrBranch = lr.branch || lr.bookingBranch;
+          const canView = isAdmin || !userBranch || lrBranch?.toString() === userBranch.toString();
+          
+          if (!canView) {
+            alert('⚠️ You can only view LRs booked by your branch.');
+            sessionStorage.removeItem('editLRId');
+            sessionStorage.removeItem('editLRKey');
+            return;
           }
-        }
-        if (lr.destination) {
-          const destCity = allCities.find(c => c.id?.toString() === lr.destination?.toString() || c.code === lr.destination);
-          if (destCity) {
-            setSelectedDestination(destCity);
-            setDestinationSearch(destCity.cityName);
+          
+          setCurrentLR(lr);
+          setFormData({ ...lr });
+          setViewMode('view'); // Reset to view mode when loading LR
+          checkEditPermissions(lr, allManifests, allInvoices, allPods);
+          
+          // Initialize refs with current LR values
+          lastPieces.current = parseFloat(lr.pieces) || 0;
+          lastWeight.current = parseFloat(lr.weight) || 0;
+          lastCFT.current = parseFloat(lr.calculatedCFT) || 0;
+          lastRate.current = parseFloat(lr.charges?.rate) || 0;
+          lastCalculationMethod.current = lr.charges?.calculationMethod || 'by-weight';
+          lastCalculatedFreight.current = parseFloat(lr.charges?.freightRate) || 0;
+          isFreightManual.current = false;
+          
+          // Set selected origin and destination cities
+          // Try multiple ways to find the city (ID, code, cityName, fromLocation/toLocation)
+          if (lr.origin || lr.fromLocation) {
+            const originValue = lr.origin || lr.fromLocation;
+            let originCity = null;
+            
+            // Try to find by ID
+            if (originValue) {
+              originCity = allCities.find(c => 
+                c.id?.toString() === originValue.toString() || 
+                c.code === originValue || 
+                c.code?.toString() === originValue.toString() ||
+                c.cityName === originValue ||
+                c.cityName?.toLowerCase() === String(originValue).toLowerCase()
+              );
+            }
+            
+            if (originCity) {
+              setSelectedOrigin(originCity);
+              setOriginSearch(originCity.cityName);
+              // Ensure formData.origin is set to city ID
+              setFormData(prev => ({ ...prev, origin: originCity.id.toString() }));
+            } else if (originValue) {
+              // If city not found, still set the search field with the value
+              setOriginSearch(String(originValue));
+              setFormData(prev => ({ ...prev, origin: String(originValue) }));
+            }
+          }
+          
+          if (lr.destination || lr.toLocation) {
+            const destValue = lr.destination || lr.toLocation;
+            let destCity = null;
+            
+            // Try to find by ID
+            if (destValue) {
+              destCity = allCities.find(c => 
+                c.id?.toString() === destValue.toString() || 
+                c.code === destValue || 
+                c.code?.toString() === destValue.toString() ||
+                c.cityName === destValue ||
+                c.cityName?.toLowerCase() === String(destValue).toLowerCase()
+              );
+            }
+            
+            if (destCity) {
+              setSelectedDestination(destCity);
+              setDestinationSearch(destCity.cityName);
+              // Ensure formData.destination is set to city ID
+              setFormData(prev => ({ ...prev, destination: destCity.id.toString() }));
+            } else if (destValue) {
+              // If city not found, still set the search field with the value
+              setDestinationSearch(String(destValue));
+              setFormData(prev => ({ ...prev, destination: String(destValue) }));
+            }
           }
         }
       }
       if (sessionStorage.getItem('editLRId')) {
         sessionStorage.removeItem('editLRId');
       }
+    } catch (error) {
+      console.error('Error loading LR data:', error);
     }
   };
 
+  // Load data when component mounts or when dependencies change
   useEffect(() => {
-    loadLRData();
-  }, []);
-
+    if (isAdmin !== null && userBranch !== undefined) {
+      loadLRData();
+    }
+  }, [isAdmin, userBranch]);
+  
+  // Reload when selected LR changes
   useEffect(() => {
     if (selectedLRId) {
       loadLRData();
     }
   }, [selectedLRId]);
+
+  // Update city search fields when cities are loaded and formData has origin/destination
+  useEffect(() => {
+    if (formData && cities.length > 0) {
+      // Update origin if formData.origin exists but selectedOrigin is not set
+      if (formData.origin && !selectedOrigin) {
+        const originValue = formData.origin;
+        const originCity = cities.find(c => 
+          c.id?.toString() === originValue.toString() || 
+          c.code === originValue || 
+          c.code?.toString() === originValue.toString() ||
+          c.cityName === originValue ||
+          c.cityName?.toLowerCase() === String(originValue).toLowerCase()
+        );
+        if (originCity) {
+          setSelectedOrigin(originCity);
+          setOriginSearch(originCity.cityName);
+        } else if (originValue) {
+          // If city not found, try getCityName helper
+          const cityName = getCityName(originValue);
+          if (cityName && cityName !== originValue) {
+            setOriginSearch(cityName);
+          } else {
+            setOriginSearch(String(originValue));
+          }
+        }
+      }
+      
+      // Update destination if formData.destination exists but selectedDestination is not set
+      if (formData.destination && !selectedDestination) {
+        const destValue = formData.destination;
+        const destCity = cities.find(c => 
+          c.id?.toString() === destValue.toString() || 
+          c.code === destValue || 
+          c.code?.toString() === destValue.toString() ||
+          c.cityName === destValue ||
+          c.cityName?.toLowerCase() === String(destValue).toLowerCase()
+        );
+        if (destCity) {
+          setSelectedDestination(destCity);
+          setDestinationSearch(destCity.cityName);
+        } else if (destValue) {
+          // If city not found, try getCityName helper
+          const cityName = getCityName(destValue);
+          if (cityName && cityName !== destValue) {
+            setDestinationSearch(cityName);
+          } else {
+            setDestinationSearch(String(destValue));
+          }
+        }
+      }
+    }
+  }, [cities, formData?.origin, formData?.destination]);
     
   // Listen for storage changes to reload when LR is updated elsewhere
   useEffect(() => {
@@ -498,7 +665,7 @@ export default function LRModifyForm() {
             ...prev,
             charges: {
               ...prev.charges,
-              freightRate: calculatedFreight.toFixed(2)
+              freightRate: (parseFloat(calculatedFreight) || 0).toFixed(2)
             }
           }));
           
@@ -637,7 +804,7 @@ export default function LRModifyForm() {
     const totalCFTWeight = calculateTotalCFTWeight();
     setFormData(prev => ({ 
       ...prev, 
-      calculatedCFT: totalCFTWeight.toFixed(2),
+      calculatedCFT: (parseFloat(totalCFTWeight) || 0).toFixed(2),
       cftEntries: cftEntries // Save entries for print view
     }));
     // Update CFT ref to trigger freight recalculation
@@ -645,7 +812,7 @@ export default function LRModifyForm() {
     setShowCFTCalculator(false);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData || !currentLR) return;
 
@@ -665,53 +832,192 @@ export default function LRModifyForm() {
       return;
     }
 
-    const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    const lrIndex = allLRs.findIndex(lr => lr.id === currentLR.id);
+    // Find LR from current state (from API)
+    const lrToUpdate = lrBookings.find(lr => lr.id === currentLR.id);
     
-    if (lrIndex === -1) {
-      alert('LR not found!');
-      return;
+    if (!lrToUpdate) {
+      // Try to find in allLRBookings as fallback
+      const lrInAll = allLRBookings?.find(lr => lr.id === currentLR.id);
+      if (!lrInAll) {
+        alert('⚠️ LR not found! Please refresh the page and try again.');
+        return;
+      }
     }
 
-    // If charges-only mode, only update charges
-    if (editMode === 'charges-only') {
-      allLRs[lrIndex] = {
-        ...allLRs[lrIndex],
-        charges: formData.charges,
-        totalAmount: formData.totalAmount,
-        gstAmount: formData.gstAmount,
-        updatedAt: new Date().toISOString()
+    try {
+      // Prepare update data - filter out UI-only fields and map to database columns
+      const filterUpdateData = (data) => {
+        // Fields to exclude (UI-only or not in database schema)
+        // Only include basic fields that are definitely in the database
+        const excludeFields = [
+          'lrMode', // UI-only field for auto/manual LR number generation
+          'bookingMode', // May not be in schema (FTL/PTL)
+          'selectedOrigin', // UI state
+          'selectedDestination', // UI state
+          'showOriginDropdown', // UI state
+          'showDestinationDropdown', // UI state
+          'originDropdownIndex', // UI state
+          'destinationDropdownIndex', // UI state
+          'showCFTCalculator', // UI state
+          'expandedLR', // UI state
+          'podFormData', // UI state
+        ];
+        
+        // Fields that might not exist as direct columns - store in data column
+        // These are fields that may not be in the basic database schema
+        // Only basic fields like id, lrNumber, date, status, createdAt, updatedAt should be direct columns
+        const fieldsToStoreInData = [
+          'vehicleNumber',
+          'driverName',
+          'vehicle',
+          'driver',
+          'vehicleId',
+          'driverId',
+          'expectedDeliveryDate',
+          'pickupDate',
+          'deliveryDate',
+          'bookingDate',
+          'lrDate',
+          'invoiceNumber',
+          'ewaybillNumber',
+          'ewaybillDate',
+          'lrReferenceNumber',
+          'referenceNumber',
+          'bookingBranch',
+          'branch',
+          'origin',
+          'destination',
+          'fromLocation',
+          'toLocation',
+          'pieces',
+          'weight',
+          'calculatedCFT',
+          'totalAmount',
+          'gstAmount',
+          'paymentMode',
+          'tbbClient',
+          'freightRate',
+          'remarks',
+          'code',
+          'clientName',
+          'clientId',
+        ];
+        
+        // Fields that should be stored in 'data' column as JSON (complex objects)
+        const jsonFields = [
+          'consignor',
+          'consignee',
+          'charges',
+          'cftEntries',
+          'deliveryPoints',
+          'pickupPoints',
+          'nearbyCities',
+          'odaLocations',
+          'contactDetails',
+          'address',
+          'bankDetails',
+        ];
+        
+        const filtered = {};
+        const dataColumn = {};
+        
+        // Only these basic fields should be direct columns in the database
+        const allowedDirectColumns = ['id', 'lrNumber', 'date', 'status', 'createdAt', 'updatedAt', 'data'];
+        
+        Object.keys(data).forEach(key => {
+          // Exclude UI-only fields
+          if (excludeFields.includes(key)) return;
+          
+          // Exclude undefined values
+          if (data[key] === undefined) return;
+          
+          // Exclude null values for optional fields (except id and lrNumber)
+          if (data[key] === null && !['id', 'lrNumber'].includes(key)) return;
+          
+          // Only allow basic schema fields as direct columns
+          if (!allowedDirectColumns.includes(key)) {
+            // Store everything else in data column
+            if (fieldsToStoreInData.includes(key) || jsonFields.includes(key) || 
+                (typeof data[key] === 'object' && data[key] !== null && !Array.isArray(data[key]) && !(data[key] instanceof Date) && !(data[key] instanceof String))) {
+              dataColumn[key] = data[key];
+            } else {
+              // Even simple fields that aren't in the basic schema go to data column
+              dataColumn[key] = data[key];
+            }
+            return;
+          }
+          
+          // Include only allowed direct columns
+          filtered[key] = data[key];
+        });
+        
+        // If we have complex data, store it in 'data' column
+        if (Object.keys(dataColumn).length > 0) {
+          // Merge with existing data column if present
+          const existingData = typeof filtered.data === 'string' ? JSON.parse(filtered.data) : (filtered.data || {});
+          filtered.data = JSON.stringify({ ...existingData, ...dataColumn });
+        }
+        
+        return filtered;
       };
-    } else {
-      // Full edit mode - update everything
-      allLRs[lrIndex] = {
-        ...formData,
-        cftEntries: cftEntries, // Include CFT entries for dimensions
-        updatedAt: new Date().toISOString()
-      };
-    }
+      
+      let updateData;
+      if (editMode === 'charges-only') {
+        // Charges-only mode - only update charges
+        updateData = filterUpdateData({
+          ...currentLR,
+          charges: formData.charges,
+          totalAmount: formData.totalAmount,
+          gstAmount: formData.gstAmount,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        // Full edit mode - update everything (but filter out UI fields)
+        updateData = filterUpdateData({
+          ...formData,
+          cftEntries: cftEntries, // Include CFT entries for dimensions
+          updatedAt: new Date().toISOString()
+        });
+      }
 
-    localStorage.setItem('lrBookings', JSON.stringify(allLRs));
-    setLrBookings(allLRs);
-    
-    alert(`✅ LR ${editMode === 'charges-only' ? 'charges' : 'details'} updated successfully!`);
-    
-    // Switch back to view mode after successful update
-    setViewMode('view');
-    // Reload the updated LR
-    const updatedLR = allLRs.find(lr => lr.id === currentLR.id);
-    if (updatedLR) {
-      setCurrentLR(updatedLR);
-      setFormData({ ...updatedLR });
+      // Update via correct LR table
+      const table = currentLR.__table || 'lrBookings';
+      const result =
+        table === 'ftlLRBookings'
+          ? await apiService.updateFTLLRBooking(currentLR.id, updateData)
+          : table === 'ptlLRBookings'
+            ? await apiService.updatePTLLRBooking(currentLR.id, updateData)
+            : await apiService.updateLRBooking(currentLR.id, updateData);
+      
+      if (result && result.success !== false) {
+        // Reload LR data from API (combined)
+        await loadLRData();
+
+        // Find and set the updated LR
+        const updatedLR = lrBookings?.find(lr => (lr.__table || 'lrBookings') === table && lr.id === currentLR.id) || result.data;
+        if (updatedLR) {
+          setCurrentLR(updatedLR);
+          setFormData({ ...updatedLR });
+        }
+        
+        alert(`✅ LR ${editMode === 'charges-only' ? 'charges' : 'details'} updated successfully!`);
+        
+        // Switch back to view mode after successful update
+        setViewMode('view');
+      } else {
+        throw new Error(result?.error || 'Update failed');
+      }
+    } catch (error) {
+      console.error('Error updating LR:', error);
+      alert(`❌ Failed to update LR: ${error.message || 'Unknown error'}`);
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!currentLR) return;
 
     // Check if manifested
-    const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const inManifest = allManifests.some(m => 
+    const inManifest = manifests.some(m => 
       m.selectedLRs?.some(mlr => {
         const mlrId = typeof mlr === 'object' ? mlr.id : mlr;
         return mlrId === currentLR.id;
@@ -725,8 +1031,7 @@ export default function LRModifyForm() {
     }
 
     // Check if billed
-    const allInvoices = JSON.parse(localStorage.getItem('invoices') || '[]');
-    const isBilled = allInvoices.some(inv => 
+    const isBilled = invoices.some(inv => 
       inv.lrNumbers?.includes(currentLR.lrNumber) || 
       inv.lrNumbers?.some(ln => ln === currentLR.lrNumber) ||
       inv.lrDetails?.some(ld => ld.id === currentLR.id || ld.lrNumber === currentLR.lrNumber)
@@ -739,22 +1044,49 @@ export default function LRModifyForm() {
     }
 
     // Delete confirmation is already shown in the delete mode UI
-    const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    const updatedLRs = allLRs.filter(lr => lr.id !== currentLR.id);
-    localStorage.setItem('lrBookings', JSON.stringify(updatedLRs));
-    setLrBookings(updatedLRs);
-    setCurrentLR(null);
-    setFormData(null);
-    setSelectedLRId(null);
-    setViewMode('view'); // Reset to view mode
-    alert('✅ LR deleted successfully!');
+    try {
+      // Delete via correct LR table
+      const table = currentLR.__table || 'lrBookings';
+      const result =
+        table === 'ftlLRBookings'
+          ? await apiService.deleteFTLLRBooking(currentLR.id)
+          : table === 'ptlLRBookings'
+            ? await apiService.deletePTLLRBooking(currentLR.id)
+            : await apiService.deleteLRBooking(currentLR.id);
+      
+      if (result && result.success !== false) {
+        // Reload LR data from API (combined)
+        await loadLRData();
+        
+        // Clear current LR selection
+        setCurrentLR(null);
+        setFormData(null);
+        setSelectedLRId(null);
+        setSelectedLRKey(null);
+        setViewMode('view'); // Reset to view mode
+        
+        alert('✅ LR deleted successfully!');
+      } else {
+        throw new Error(result?.error || 'Delete failed');
+      }
+    } catch (error) {
+      console.error('Error deleting LR:', error);
+      alert(`❌ Failed to delete LR: ${error.message || 'Unknown error'}`);
+      setViewMode('view'); // Reset to view mode even on error
+    }
   };
 
-  const handleSelectLR = (lrId) => {
-    setSelectedLRId(lrId);
-    // Load from all LRs, not just filtered ones
-    const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    const lr = allLRs.find(l => l.id.toString() === lrId.toString());
+  const handleSelectLR = (lrKeyOrId) => {
+    setSelectedLRId(lrKeyOrId);
+    setSelectedLRKey(String(lrKeyOrId));
+    // Find LR from current combined lrBookings state
+    let lr = null;
+    if (String(lrKeyOrId).includes(':')) {
+      const [tbl, id] = String(lrKeyOrId).split(':');
+      lr = lrBookings.find(l => l.__table === tbl && l.id && l.id.toString() === id.toString());
+    } else {
+      lr = lrBookings.find(l => l.id && l.id.toString() === String(lrKeyOrId));
+    }
     if (lr) {
       // Check if user has permission to view this LR
       if (!isLRFromUserBranch(lr)) {
@@ -765,10 +1097,7 @@ export default function LRModifyForm() {
       setCurrentLR(lr);
       setFormData({ ...lr });
       setViewMode('view'); // Reset to view mode when selecting a new LR
-      const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-      const allInvoices = JSON.parse(localStorage.getItem('invoices') || '[]');
-      const allPods = JSON.parse(localStorage.getItem('pods') || '[]');
-      checkEditPermissions(lr, allManifests, allInvoices, allPods);
+      checkEditPermissions(lr, manifests, invoices, pods);
     }
   };
 
@@ -834,8 +1163,8 @@ export default function LRModifyForm() {
           <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
             {filteredLRs.map(lr => (
               <div
-                key={lr.id}
-                onClick={() => handleSelectLR(lr.id)}
+                key={lr.__key || `${lr.__table || 'lrBookings'}:${lr.id}`}
+                onClick={() => handleSelectLR(lr.__key || lr.id)}
                 style={{
                   padding: '16px',
                   marginBottom: '10px',
@@ -843,16 +1172,16 @@ export default function LRModifyForm() {
                   borderRadius: '8px',
                   cursor: 'pointer',
                   transition: 'all 0.2s',
-                  background: selectedLRId === lr.id ? '#eff6ff' : 'white'
+                  background: selectedLRKey === (lr.__key || `${lr.__table || 'lrBookings'}:${lr.id}`) ? '#eff6ff' : 'white'
                 }}
                 onMouseEnter={(e) => {
-                  if (selectedLRId !== lr.id) {
+                  if (selectedLRKey !== (lr.__key || `${lr.__table || 'lrBookings'}:${lr.id}`)) {
                     e.currentTarget.style.borderColor = '#3b82f6';
                     e.currentTarget.style.background = '#f8fafc';
                   }
                 }}
                 onMouseLeave={(e) => {
-                  if (selectedLRId !== lr.id) {
+                  if (selectedLRKey !== (lr.__key || `${lr.__table || 'lrBookings'}:${lr.id}`)) {
                     e.currentTarget.style.borderColor = '#e2e8f0';
                     e.currentTarget.style.background = 'white';
                   }
@@ -966,6 +1295,7 @@ export default function LRModifyForm() {
           font-size: 0.95rem;
           transition: all 0.2s ease;
           background: white;
+          color: #1e293b;
         }
         
         input:disabled, select:disabled, textarea:disabled {
@@ -1003,6 +1333,16 @@ export default function LRModifyForm() {
           box-shadow: 0 4px 12px rgba(59,130,246,0.3);
         }
         
+        .btn-secondary {
+          background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+          color: white;
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(100,116,139,0.3);
+        }
+        
         .btn-danger {
           background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
           color: white;
@@ -1034,6 +1374,41 @@ export default function LRModifyForm() {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
           gap: 16px;
+        }
+        
+        .toggle-group {
+          display: flex;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        
+        .toggle-btn {
+          flex: 1;
+          padding: 10px;
+          border: 2px solid #e2e8f0;
+          border-radius: 8px;
+          background: white;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          font-weight: 500;
+          color: #64748b;
+        }
+        
+        .toggle-btn:hover:not(:disabled) {
+          border-color: #3b82f6;
+          background: #f8fafc;
+        }
+        
+        .toggle-btn.active {
+          background: #3b82f6;
+          color: white;
+          border-color: #3b82f6;
+        }
+        
+        .toggle-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+          background: #f8fafc;
         }
         
         .status-banner {
@@ -1292,6 +1667,17 @@ export default function LRModifyForm() {
                   required
                 />
               </div>
+              
+              <div className="input-group">
+                <label>Reference Number</label>
+                <input
+                  type="text"
+                  value={formData.referenceNumber || ''}
+                  onChange={(e) => setFormData(prev => ({ ...prev, referenceNumber: e.target.value }))}
+                  placeholder="PO/Order/Ref No (optional)"
+                  disabled={!isEditable || editMode !== 'full'}
+                />
+              </div>
             </div>
             
             {/* Branch display */}
@@ -1392,7 +1778,7 @@ export default function LRModifyForm() {
                       </button>
                       <button
                         type="button"
-                        className={`toggle-btn ${formData.deliveryType === 'Door' ? 'active' : ''}`}
+                        className={`toggle-btn ${formData.deliveryType === 'Door' || formData.deliveryType === 'Door Delivery' ? 'active' : ''}`}
                         onClick={() => setFormData(prev => ({ ...prev, deliveryType: 'Door' }))}
                         disabled={!isEditable || editMode !== 'full'}
                       >
@@ -2086,19 +2472,19 @@ export default function LRModifyForm() {
               <div>
                 <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '4px' }}>Subtotal</div>
                 <div style={{ fontSize: '1.1rem', fontWeight: 600, color: '#1e293b' }}>
-                  ₹{(formData.totalAmount - formData.gstAmount).toFixed(2)}
+                  ₹{((parseFloat(formData.totalAmount) || 0) - (parseFloat(formData.gstAmount) || 0)).toFixed(2)}
                 </div>
               </div>
               <div>
                 <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '4px' }}>GST</div>
                 <div style={{ fontSize: '1.1rem', fontWeight: 600, color: '#1e293b' }}>
-                  ₹{formData.gstAmount?.toFixed(2) || '0.00'}
+                  ₹{(parseFloat(formData.gstAmount) || 0).toFixed(2)}
                 </div>
               </div>
               <div>
                 <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '4px' }}>Total Amount</div>
                 <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#3b82f6' }}>
-                  ₹{formData.totalAmount?.toFixed(2) || '0.00'}
+                  ₹{(parseFloat(formData.totalAmount) || 0).toFixed(2)}
                 </div>
               </div>
             </div>
@@ -2433,6 +2819,7 @@ export default function LRModifyForm() {
         }}>
           <LRPrintView 
             lrId={currentLR.id} 
+            lrTable={currentLR.__table}
             onClose={() => setShowPrintView(false)} 
           />
         </div>

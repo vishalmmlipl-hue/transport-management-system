@@ -1,10 +1,11 @@
 export const expenseMasterService = {
-  getAll: () => dataService.getAll('expenseMaster'),
-  getById: (id) => dataService.getById('expenseMaster', id),
-  create: (record) => dataService.create('expenseMaster', record),
-  update: (id, updates) => dataService.update('expenseMaster', id, updates),
-  delete: (id) => dataService.delete('expenseMaster', id),
-  query: (filters) => dataService.query('expenseMaster', filters)
+  // Backend table is expenseTypes (NOT expenseMaster)
+  getAll: () => dataService.getAll('expenseTypes'),
+  getById: (id) => dataService.getById('expenseTypes', id),
+  create: (record) => dataService.create('expenseTypes', record),
+  update: (id, updates) => dataService.update('expenseTypes', id, updates),
+  delete: (id) => dataService.delete('expenseTypes', id),
+  query: (filters) => dataService.query('expenseTypes', filters)
 };
 
 export const accountsService = {
@@ -18,12 +19,45 @@ export const accountsService = {
 // Data Service Layer
 // This service abstracts data storage - works only with backend API (cloud sync)
 
-// Render.com API base URL - includes /api
-const API_BASE_URL = 'https://transport-management-system-wzhx.onrender.com/api';
+// API URLs for different environments
+const HOSTINGER_API_URL = 'https://mmlipl.in/api';
+const RENDER_API_URL = 'https://transport-management-system-wzhx.onrender.com/api';
+
+/**
+ * Get API Base URL dynamically based on hostname
+ */
+function getAPIBaseURL() {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    
+    // mmlipl.in → Use Hostinger API
+    if (hostname === 'mmlipl.in' || hostname === 'www.mmlipl.in') {
+      return HOSTINGER_API_URL;
+    }
+    
+    // mmlipl.info → Use Render.com API
+    if (hostname === 'mmlipl.info' || 
+        hostname === 'www.mmlipl.info' ||
+        hostname.includes('netlify.app') ||
+        hostname.includes('vercel.app')) {
+      return RENDER_API_URL;
+    }
+  }
+  
+  // Development: Use environment variable if set, otherwise Hostinger
+  const envUrl = process.env.REACT_APP_API_URL;
+  if (envUrl) {
+    return envUrl;
+  }
+  
+  // Default to Hostinger for development (since that's the production server)
+  return HOSTINGER_API_URL;
+}
 
 // Helper for HTTP requests
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const apiBaseUrl = getAPIBaseURL();
+  const response = await fetch(`${apiBaseUrl}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
@@ -34,7 +68,9 @@ async function apiRequest(path, options = {}) {
     const errorText = await response.text();
     throw new Error(errorText || 'API request failed');
   }
-  return response.json();
+  const data = await response.json();
+  // Handle both array response and object with data property
+  return Array.isArray(data) ? data : (data.data || data);
 }
 
 // Generic CRUD operations using Render.com API
@@ -80,20 +116,24 @@ export const dataService = {
 };
 
 // Table name mapping for backend API
+// Note: Backend uses camelCase (lrBookings), not snake_case (lr_bookings)
 const tableNames = {
   branches: 'branches',
   cities: 'cities',
   vehicles: 'vehicles',
   drivers: 'drivers',
-  lrBookings: 'lr_bookings',
+  lrBookings: 'lrBookings', // Fixed: was 'lr_bookings', backend uses 'lrBookings'
   manifests: 'manifests',
   trips: 'trips',
   pods: 'pods',
   invoices: 'invoices',
   payments: 'payments',
   users: 'users',
-  tbbClients: 'tbb_clients', // <-- Ensure this matches your backend table name
-  clients: 'clients'         // <-- Ensure this matches your backend table name
+  clientRates: 'clientRates',
+  // Backend exposes /api/clients (NOT /api/tbb_clients)
+  // Keep tbbClients as an alias to clients for backward compatibility.
+  tbbClients: 'clients',
+  clients: 'clients'
 };
 
 // Convenience functions for each table

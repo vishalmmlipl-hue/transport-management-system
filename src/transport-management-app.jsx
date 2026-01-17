@@ -10,6 +10,7 @@ import CityMasterForm from './city-master-form.jsx';
 import VehicleMasterForm from './vehicle-master-form.jsx';
 import DriverMasterForm from './driver-master-form.jsx';
 import StaffMasterForm from './staff-master-form.jsx';
+import StaffAttendanceMaster from './staff-attendance-master.jsx';
 import BranchMasterForm from './branch-master-form.jsx';
 import UserMasterForm from './user-master-form.jsx';
 import AccountMaster from './account-master.jsx';
@@ -32,12 +33,14 @@ import ManagePODForm from './manage-pod-form.jsx';
 import BillingInvoiceForm from './billing-invoice-form.jsx';
 import PaymentCollectionForm from './payment-collection-form.jsx';
 import ReportsDashboard from './reports-dashboard.jsx';
+import TripProductivityReport from './trip-productivity-report.jsx';
 import PendingShipmentsBranch from './pending-shipments-branch.jsx';
 import BranchExpenseForm from './branch-expense-form.jsx';
 import AdminExpenseForm from './admin-expense-form.jsx';
 import BranchAccountForm from './branch-account-form.jsx';
 import BranchDayBook from './branch-daybook.jsx';
 import ExpenseMasterForm from './expense-master-form.jsx';
+import VehicleMaintenanceForm from './vehicle-maintenance-form.jsx';
 
 export default function TransportManagementApp() {
   const [currentView, setCurrentView] = useState('home');
@@ -47,30 +50,35 @@ export default function TransportManagementApp() {
   const [branches, setBranches] = useState([]);
   const [selectedBranch, setSelectedBranch] = useState(null);
 
-  // Load branches from server using hook (no localStorage fallback)
+  // Load branches from server (syncService) and keep localStorage in sync
   const loadBranchesFromServer = async () => {
     try {
-      const response = await fetch('https://transport-management-system-wzhx.onrender.com/api/branches');
-      const result = await response.json();
-      // Safety: ensure result.data is an array and filter out invalid entries
-      const allBranches = Array.isArray(result.data) ? result.data : [];
-      const activeBranches = allBranches
+      const result = await syncService.load('branches');
+      const allBranches = Array.isArray(result) ? result : (result?.data || []);
+
+      const activeBranches = (allBranches || [])
         .filter(b => b && (b.status === 'Active' || !b.status))
         .map(b => ({
           ...b,
-          id: b.id || null // Ensure id exists or is null
-        }));
+          // Clean branch names - remove trailing "0" if present
+          branchName: b.branchName ? b.branchName.trim().replace(/0+$/, '').trim() : b.branchName,
+          id: b.id ?? null
+        }))
+        .filter(b => b.id != null);
+
       setBranches(activeBranches);
-      
-      // Clear localStorage to prevent conflicts
-      localStorage.removeItem('branches');
+
+      // Keep localStorage updated for other screens/components
+      localStorage.setItem('branches', JSON.stringify(activeBranches));
       
       return activeBranches;
     } catch (error) {
       console.error('Error loading branches:', error);
-      // DO NOT fallback to localStorage - this causes browser-specific data
-      setBranches([]);
-      return [];
+      // Fallback to existing localStorage value if server unavailable
+      const fallback = JSON.parse(localStorage.getItem('branches') || '[]');
+      const activeFallback = (fallback || []).filter(b => b && (b.status === 'Active' || !b.status));
+      setBranches(activeFallback);
+      return activeFallback;
     }
   };
 
@@ -111,7 +119,7 @@ export default function TransportManagementApp() {
           // For admin: load selected branch from localStorage or use first branch
           if (userData.role === 'Admin' || userData.role === 'admin') {
             const savedBranchId = localStorage.getItem('adminSelectedBranch');
-            if (savedBranchId && loadedBranches.length > 0) {
+            if (savedBranchId && savedBranchId !== 'all' && loadedBranches.length > 0) {
               const branch = loadedBranches.find(b => b && b.id && String(b.id) === String(savedBranchId));
               if (branch) {
                 setSelectedBranch(branch);
@@ -120,6 +128,11 @@ export default function TransportManagementApp() {
                 setCurrentUser(updatedUser);
                 localStorage.setItem('currentUser', JSON.stringify(updatedUser));
               }
+            } else if (savedBranchId === 'all') {
+              setSelectedBranch(null);
+              const updatedUser = { ...userData, branch: null };
+              setCurrentUser(updatedUser);
+              localStorage.setItem('currentUser', JSON.stringify(updatedUser));
             } else if (loadedBranches.length > 0 && loadedBranches[0] && loadedBranches[0].id) {
               setSelectedBranch(loadedBranches[0]);
               const updatedUser = { ...userData, branch: loadedBranches[0].id };
@@ -208,10 +221,10 @@ export default function TransportManagementApp() {
   }, []);
 
   const ACCESS_CONTROL = {
-    'Admin': ['client-master', 'city-master', 'vehicle-master', 'driver-master', 'staff-master', 'branch-master', 'user-master', 'lr-series', 'account-master', 'expense-master', 'client-rate-master', 'market-vehicle-vendor', 'other-vendor', 'lr-booking', 'ftl-booking', 'ftl-inquiry', 'ftl-inquiry-report', 'lr-modify', 'manifest', 'manifest-receive', 'pending-shipments', 'trip-management', 'pod', 'manage-pod', 'billing', 'payments', 'branch-expense', 'admin-expense', 'branch-account', 'branch-daybook', 'reports'],
-    'Manager': ['client-master', 'city-master', 'vehicle-master', 'driver-master', 'staff-master', 'lr-series', 'account-master', 'expense-master', 'client-rate-master', 'market-vehicle-vendor', 'other-vendor', 'lr-booking', 'ftl-booking', 'ftl-inquiry', 'ftl-inquiry-report', 'lr-modify', 'manifest', 'manifest-receive', 'pending-shipments', 'trip-management', 'pod', 'manage-pod', 'billing', 'payments', 'branch-expense', 'branch-account', 'branch-daybook', 'reports'],
+    'Admin': ['client-master', 'city-master', 'vehicle-master', 'driver-master', 'staff-master', 'staff-attendance', 'branch-master', 'user-master', 'lr-series', 'account-master', 'expense-master', 'vehicle-maintenance', 'client-rate-master', 'market-vehicle-vendor', 'other-vendor', 'lr-booking', 'ftl-booking', 'ftl-inquiry', 'ftl-inquiry-report', 'lr-modify', 'manifest', 'manifest-receive', 'pending-shipments', 'trip-management', 'pod', 'manage-pod', 'billing', 'payments', 'branch-expense', 'admin-expense', 'branch-account', 'branch-daybook', 'reports', 'trip-productivity-report'],
+    'Manager': ['client-master', 'city-master', 'vehicle-master', 'driver-master', 'staff-master', 'staff-attendance', 'lr-series', 'account-master', 'expense-master', 'vehicle-maintenance', 'client-rate-master', 'market-vehicle-vendor', 'other-vendor', 'lr-booking', 'ftl-booking', 'ftl-inquiry', 'ftl-inquiry-report', 'lr-modify', 'manifest', 'manifest-receive', 'pending-shipments', 'trip-management', 'pod', 'manage-pod', 'billing', 'payments', 'branch-expense', 'branch-account', 'branch-daybook', 'reports', 'trip-productivity-report'],
     'Operator': ['lr-booking', 'ftl-booking', 'ftl-inquiry', 'ftl-inquiry-report', 'lr-modify', 'manifest', 'manifest-receive', 'pending-shipments', 'trip-management', 'pod', 'manage-pod', 'branch-expense', 'branch-daybook'],
-    'Accountant': ['client-master', 'account-master', 'expense-master', 'client-rate-master', 'lr-booking', 'ftl-booking', 'lr-modify', 'billing', 'payments', 'branch-expense', 'admin-expense', 'branch-account', 'branch-daybook', 'reports'],
+    'Accountant': ['client-master', 'account-master', 'expense-master', 'vehicle-maintenance', 'client-rate-master', 'lr-booking', 'ftl-booking', 'lr-modify', 'billing', 'payments', 'branch-expense', 'admin-expense', 'branch-account', 'branch-daybook', 'reports', 'trip-productivity-report'],
     'Driver': ['trip-management', 'pod']
   };
 
@@ -241,6 +254,7 @@ export default function TransportManagementApp() {
       items: [
         { id: 'billing', title: 'Billing & Invoice', icon: Receipt, color: '#f59e0b' },
         { id: 'payments', title: 'Payment Collection', icon: DollarSign, color: '#10b981' },
+        { id: 'vehicle-maintenance', title: 'Vehicle Maintenance', icon: Truck, color: '#f97316' },
         { id: 'branch-expense', title: 'Branch Expense', icon: Receipt, color: '#f97316' },
         { id: 'admin-expense', title: 'Fund Allocation', icon: DollarSign, color: '#3b82f6' },
         { id: 'branch-daybook', title: 'Branch Day Book', icon: BookOpen, color: '#14b8a6' }
@@ -252,6 +266,7 @@ export default function TransportManagementApp() {
       color: '#ec4899',
       items: [
         { id: 'reports', title: 'Reports & Analytics', icon: BarChart, color: '#ec4899' },
+        { id: 'trip-productivity-report', title: 'Trip Productivity Report', icon: TrendingUp, color: '#10b981' },
         { id: 'ftl-inquiry-report', title: 'FTL Inquiry Report', icon: FileText, color: '#06b6d4' }
       ]
     },
@@ -265,6 +280,7 @@ export default function TransportManagementApp() {
         { id: 'vehicle-master', title: 'Vehicle Master', icon: Truck, color: '#f97316' },
         { id: 'driver-master', title: 'Driver Master', icon: UserCheck, color: '#06b6d4' },
         { id: 'staff-master', title: 'Staff Master', icon: Briefcase, color: '#a855f7' },
+        { id: 'staff-attendance', title: 'Staff Attendance', icon: CheckCircle, color: '#10b981' },
         { id: 'branch-master', title: 'Branch Master', icon: Building2, color: '#f59e0b' },
         { id: 'user-master', title: 'User Master', icon: UserCog, color: '#8b5cf6' },
         { id: 'lr-series', title: 'LR Series', icon: Hash, color: '#8b5cf6' },
@@ -297,8 +313,8 @@ export default function TransportManagementApp() {
     'branchMaster': ['branch-master'],
     'marketVehicleVendor': ['market-vehicle-vendor'],
     'otherVendor': ['other-vendor'],
-    'reports': ['reports', 'ftl-inquiry-report'],
-    'settings': ['user-master', 'lr-series', 'account-master', 'expense-master', 'branch-account', 'client-rate-master']
+    'reports': ['reports', 'trip-productivity-report', 'ftl-inquiry-report'],
+    'settings': ['user-master', 'lr-series', 'account-master', 'expense-master', 'branch-account', 'client-rate-master', 'vehicle-maintenance']
   };
 
   const hasAccess = (moduleId) => {
@@ -349,6 +365,10 @@ export default function TransportManagementApp() {
       setCurrentUser(updatedUser);
       localStorage.setItem('currentUser', JSON.stringify(updatedUser));
       localStorage.removeItem('adminSelectedBranch');
+      // Notify open forms to unlock/clear branch context
+      try {
+        window.dispatchEvent(new CustomEvent('adminBranchChanged', { detail: { branchId: null } }));
+      } catch (e) {}
     } else {
       // Safety: ensure branches is an array and branchId is valid
       if (!Array.isArray(branches) || branches.length === 0) {
@@ -362,6 +382,10 @@ export default function TransportManagementApp() {
         setCurrentUser(updatedUser);
         localStorage.setItem('currentUser', JSON.stringify(updatedUser));
         localStorage.setItem('adminSelectedBranch', String(branch.id));
+        // Notify open forms to lock to this branch
+        try {
+          window.dispatchEvent(new CustomEvent('adminBranchChanged', { detail: { branchId: String(branch.id) } }));
+        } catch (e) {}
       } else {
         console.warn('Branch not found for ID:', branchId);
       }
@@ -377,11 +401,13 @@ export default function TransportManagementApp() {
       'vehicle-master': <VehicleMasterForm />,
       'driver-master': <DriverMasterForm />,
       'staff-master': <StaffMasterForm />,
+      'staff-attendance': <StaffAttendanceMaster />,
       'branch-master': <BranchMasterForm />,
       'user-master': <UserMasterForm />,
       'lr-series': <LRSeriesMaster />,
       'account-master': <AccountMaster />,
       'expense-master': <ExpenseMasterForm />,
+      'vehicle-maintenance': <VehicleMaintenanceForm />,
       'client-rate-master': <ClientRateMaster />,
       'market-vehicle-vendor': <MarketVehicleVendorForm />,
       'other-vendor': <OtherVendorForm />,
@@ -402,7 +428,8 @@ export default function TransportManagementApp() {
       'admin-expense': <AdminExpenseForm />,
       'branch-account': <BranchAccountForm />,
       'branch-daybook': <BranchDayBook />,
-      'reports': <ReportsDashboard />
+      'reports': <ReportsDashboard />,
+      'trip-productivity-report': <TripProductivityReport />
     };
 
     if (currentView === 'home') {
@@ -874,7 +901,15 @@ export default function TransportManagementApp() {
               border: '3px solid rgba(255,255,255,0.3)',
               boxShadow: '0 4px 16px rgba(0,0,0,0.2)'
             }}>
-              <Truck size={48} style={{ color: 'white' }} />
+              <img
+                src="/brand-logo.png"
+                alt="Company Logo"
+                style={{ width: '64px', height: '64px', objectFit: 'contain' }}
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                  e.currentTarget.src = '/logo192.png';
+                }}
+              />
             </div>
             <div>
               <h1 style={{ fontSize: '2.2rem', fontWeight: 700, marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -936,8 +971,12 @@ export default function TransportManagementApp() {
             </div>
             <LRTrackingSearch onLRSelect={(lrId) => {
               setCurrentView('lr-modify');
-              // Store selected LR ID for editing
-              sessionStorage.setItem('editLRId', lrId);
+              // Store selected LR key for editing (supports "table:id")
+              if (String(lrId).includes(':')) {
+                sessionStorage.setItem('editLRKey', lrId);
+              } else {
+                sessionStorage.setItem('editLRId', lrId);
+              }
             }} />
           </div>
         )}

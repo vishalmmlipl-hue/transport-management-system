@@ -2,16 +2,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Calculator, Printer, Search, Edit2 } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
 import { createSundryCreditorLedger } from './utils/ledgerService.js';
+import { apiService } from './utils/apiService';
 
 export default function FTLBookingForm() {
   // Load TBB clients from localStorage
   const [tbbClients, setTbbClients] = useState([]);
+  const [allClients, setAllClients] = useState([]);
   // Load Sundry Creditor clients (TBB and Credit types)
   const [sundryCreditorClients, setSundryCreditorClients] = useState([]);
   const [cities, setCities] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [branches, setBranches] = useState([]);
   const [clientRates, setClientRates] = useState([]);
+  const [lrSeries, setLrSeries] = useState([]); // LR series from LR Series Master
 
   const [selectedClient, setSelectedClient] = useState(null);
   const [selectedSundryCreditor, setSelectedSundryCreditor] = useState(null);
@@ -33,9 +36,12 @@ export default function FTLBookingForm() {
     deliveryType: 'Godown',
     bookingDate: '',
     expectedDeliveryDate: '',
+    referenceNumber: '',
     paymentMode: 'Paid',
     tbbClient: '',
     sundryCreditor: '',
+    cashToPayClientName: '',
+    cashToPayClientId: '',
     consignor: {
       name: '',
       address: '',
@@ -109,12 +115,91 @@ export default function FTLBookingForm() {
   const lastCFTDimensions = useRef(JSON.stringify({ length: '', width: '', height: '', unit: 'cm', factor: 6 }));
   const isFreightManual = useRef(false);
 
+  // Fetch next FTL LR number from server (when auto mode and no series assigned)
+  const getNextFTLLRNumber = () => {
+    return new Promise(async (resolve) => {
+      try {
+        const existing = await apiService.getFTLLRBookings();
+        if (!existing || existing.length === 0) {
+          resolve('1000000001');
+          return;
+        }
+        const lrNumbers = existing
+          .map(lr => lr.lrNumber)
+          .filter(num => num && String(num).length === 10 && !isNaN(num))
+          .map(num => parseInt(num, 10))
+          .filter(num => !isNaN(num));
+        if (lrNumbers.length === 0) {
+          resolve('1000000001');
+          return;
+        }
+        const maxLRNumber = Math.max(...lrNumbers);
+        resolve((maxLRNumber + 1).toString().padStart(10, '0'));
+      } catch (error) {
+        console.warn('Could not fetch FTL LR numbers from server, using timestamp:', error);
+        const timestamp = Date.now();
+        resolve(timestamp.toString().slice(-10).padStart(10, '0'));
+      }
+    });
+  };
+
+  // Load LR series from localStorage (LR Series Master)
   useEffect(() => {
-    if (formData.lrMode === 'auto') {
-      const autoLR = Math.floor(1000000000 + Math.random() * 9000000000).toString();
-      setFormData(prev => ({ ...prev, lrNumber: autoLR }));
-    }
-  }, [formData.lrMode]);
+    const loadLRSeries = () => {
+      try {
+        const storedSeries = JSON.parse(localStorage.getItem('lrSeries') || '[]');
+        setLrSeries(storedSeries || []);
+      } catch (err) {
+        console.warn('Could not load LR series:', err);
+        setLrSeries([]);
+      }
+    };
+    loadLRSeries();
+    const handleStorageChange = () => loadLRSeries();
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  const getAssignedSeriesForBranch = (branchId) => {
+    if (!branchId) return null;
+    const list = (lrSeries || [])
+      .filter(s => {
+        if (!s || s.status !== 'Active') return false;
+        if (s.branchId?.toString() !== branchId.toString()) return false;
+        const mode = s.bookingMode || 'PTL'; // backward compatible: old series are PTL
+        return mode === 'FTL' || mode === 'Both';
+      })
+      .slice()
+      .sort((a, b) => (b.id || 0) - (a.id || 0));
+    return list[0] || null;
+  };
+
+  const normalizeLR10Digits = (val) => {
+    const raw = String(val ?? '').trim();
+    if (!raw) return '';
+    const digits = raw.replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.length === 10) return digits;
+    if (digits.length < 10) return digits.padStart(10, '0');
+    // If something like "MUM-1000000001" or extra digits, keep the last 10
+    return digits.slice(-10);
+  };
+
+  // Generate LR number when mode is auto and number is empty
+  // Only allow auto mode if no LR series is assigned
+  useEffect(() => {
+    if (formData.lrMode !== 'auto') return;
+    if (formData.lrNumber) return;
+
+    // Always allow auto-generation (even if a manual series exists)
+    getNextFTLLRNumber().then(nextLR => {
+      setFormData(prev => ({ ...prev, lrNumber: nextLR }));
+    }).catch(() => {
+      const timestamp = Date.now();
+      const fallbackLR = timestamp.toString().slice(-10).padStart(10, '0');
+      setFormData(prev => ({ ...prev, lrNumber: fallbackLR }));
+    });
+  }, [formData.lrMode, formData.lrNumber, formData.branch, currentUser, lrSeries]);
 
   useEffect(() => {
     calculateTotals();
@@ -123,7 +208,8 @@ export default function FTLBookingForm() {
   // Fetch rate from Client Rate Master for TBB payment mode
   useEffect(() => {
     if (formData.paymentMode === 'TBB' && formData.tbbClient && formData.origin && formData.destination) {
-      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient || c.code === formData.tbbClient);
+      // Only accept actual dropdown-selected client id (prevents accidental matching via consignor typing / stale codes)
+      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient?.toString());
       const originCity = cities.find(c => c.code === formData.origin || c.id?.toString() === formData.origin);
       const destCity = cities.find(c => c.code === formData.destination || c.id?.toString() === formData.destination);
       
@@ -216,7 +302,7 @@ export default function FTLBookingForm() {
   // Fetch freight from Rate Master for FTL + TBB mode
   useEffect(() => {
     if (formData.bookingMode === 'FTL' && formData.paymentMode === 'TBB' && formData.tbbClient && formData.origin && formData.destination) {
-      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient || c.code === formData.tbbClient);
+      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient?.toString());
       const originCity = cities.find(c => c.code === formData.origin || c.id?.toString() === formData.origin);
       const destCity = cities.find(c => c.code === formData.destination || c.id?.toString() === formData.destination);
       
@@ -284,7 +370,7 @@ export default function FTLBookingForm() {
   // Fetch pickup/delivery charges from Rate Master for FTL + TBB mode
   useEffect(() => {
     if (formData.bookingMode === 'FTL' && formData.paymentMode === 'TBB' && formData.tbbClient && clientRates.length > 0 && cities.length > 0) {
-      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient || c.code === formData.tbbClient);
+      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient?.toString());
       
       if (client) {
         let updatedPickupPoints = [...formData.pickupPoints];
@@ -399,6 +485,41 @@ export default function FTLBookingForm() {
     setIsAdmin(user?.role === 'Admin' || user?.role === 'Super Admin');
   }, []);
 
+  // For Admin: when Admin selects a branch in dashboard/topbar, force booking branch.
+  // If Admin selects "All", unlock and clear booking branch so user can choose any.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const onAdminBranchChanged = (e) => {
+      const branchId = e?.detail?.branchId ? String(e.detail.branchId) : null;
+      if (!branchId) return; // Admin selected ALL branches -> do not force
+      const b = (branches || []).find(x => String(x.id) === branchId);
+      if (b) {
+        setSelectedBranch(b);
+        setFormData(prev => ({ ...prev, branch: String(b.id) }));
+      } else {
+        setFormData(prev => ({ ...prev, branch: branchId }));
+      }
+    };
+    window.addEventListener('adminBranchChanged', onAdminBranchChanged);
+    return () => window.removeEventListener('adminBranchChanged', onAdminBranchChanged);
+  }, [isAdmin, branches]);
+
+  // For Admin: on first load, apply persisted adminSelectedBranch (if any)
+  useEffect(() => {
+    if (!isAdmin) return;
+    const adminBranchId = localStorage.getItem('adminSelectedBranch');
+    if (!adminBranchId) return; // treat as ALL branches
+    if (formData.branch && String(formData.branch) === String(adminBranchId)) return;
+    const b = (branches || []).find(x => String(x.id) === String(adminBranchId));
+    if (b) {
+      setSelectedBranch(b);
+      setFormData(prev => ({ ...prev, branch: String(b.id) }));
+    } else if (adminBranchId) {
+      setFormData(prev => ({ ...prev, branch: String(adminBranchId) }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, branches]);
+
   // Function to load clients and other data from server
   const loadData = async () => {
     try {
@@ -429,30 +550,79 @@ export default function FTLBookingForm() {
       const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
       const allClients = clientsResult.data || [];
       const combinedClients = [...storedClients, ...allClients];
+
+      // Normalize clients across possible schemas (clientCode/code, clientName/companyName).
+      // IMPORTANT: in SQL schema, `clientType` may be missing → treat missing as TBB.
+      const normalizedClients = (combinedClients || []).map(c => {
+        if (!c) return null;
+        // Ensure primaryContact exists for UI (older payloads store contactPerson/mobile/email separately)
+        let primaryContact = c.primaryContact;
+        if (typeof primaryContact === 'string') {
+          try { primaryContact = JSON.parse(primaryContact); } catch (e) { primaryContact = {}; }
+        }
+        if (!primaryContact || typeof primaryContact !== 'object') primaryContact = {};
+        if (!primaryContact.name && c.contactPerson) primaryContact.name = c.contactPerson;
+        if (!primaryContact.mobile && c.mobile) primaryContact.mobile = c.mobile;
+        if (!primaryContact.email && c.email) primaryContact.email = c.email;
+
+        return {
+          ...c,
+          code: c.code || c.clientCode || c.client_code,
+          clientCode: c.clientCode || c.code || c.client_code,
+          companyName: c.companyName || c.clientName || c.client_name,
+          clientName: c.clientName || c.companyName || c.client_name,
+          primaryContact,
+        };
+      }).filter(Boolean);
+
+      const uniqByKey = (arr) => {
+        const seen = new Set();
+        return (arr || []).filter(item => {
+          const key = (item.id ?? item.code ?? item.clientCode ?? '').toString();
+          if (!key) return true;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
       
       // Only show active TBB clients
-      const activeTbbClients = combinedClients.filter(c => 
-        c.status === 'Active' && c.clientType === 'TBB'
-      );
-      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
-        index === self.findIndex(c => c.id === client.id)
-      );
+      const activeTbbClients = normalizedClients.filter(c => {
+        const ct = (c.clientType || '').toString().toUpperCase();
+        return (c.status === 'Active' || !c.status) && (!ct || ct === 'TBB');
+      });
+      const uniqueTbbClients = uniqByKey(activeTbbClients);
       setTbbClients(uniqueTbbClients);
+      setAllClients(uniqByKey(normalizedClients.filter(c => (c.status === 'Active' || !c.status))));
+      try { localStorage.setItem('tbbClients', JSON.stringify(uniqueTbbClients)); } catch (e) {}
       
       // Load Sundry Creditor clients
-      const sundryCreditors = combinedClients.filter(c => 
-        c.status === 'Active' && 
-        (c.clientType === 'TBB' || c.clientType === 'Credit')
-      );
-      const uniqueSundryCreditors = sundryCreditors.filter((client, index, self) =>
-        index === self.findIndex(c => c.id === client.id)
-      );
+      const sundryCreditors = normalizedClients.filter(c => {
+        const ct = (c.clientType || '').toString().toUpperCase();
+        return (c.status === 'Active' || !c.status) && (!ct || ct === 'TBB' || ct === 'CREDIT');
+      });
+      const uniqueSundryCreditors = uniqByKey(sundryCreditors);
       setSundryCreditorClients(uniqueSundryCreditors);
       
-      // Load client rates (from localStorage for now)
-      const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-      const activeClientRates = storedClientRates.filter(r => r.status === 'Active');
-      setClientRates(activeClientRates);
+      // Load client rates (from server so rates are shared across systems)
+      const parseMaybeJson = (value) => {
+        if (value == null) return value;
+        if (typeof value === 'object') return value;
+        if (typeof value !== 'string') return value;
+        const t = value.trim();
+        if (!t) return value;
+        try { return JSON.parse(t); } catch { return value; }
+      };
+      const ratesRes = await syncService.load('clientRates').catch(() => ({ data: [] }));
+      const rawRates = Array.isArray(ratesRes) ? ratesRes : (ratesRes?.data || []);
+      const hydratedRates = (rawRates || []).map(r => {
+        const payload = parseMaybeJson(r?.data);
+        if (payload && typeof payload === 'object') {
+          return { ...payload, id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, clientId: payload.clientId ?? r.clientId, clientCode: payload.clientCode ?? r.clientCode };
+        }
+        return r;
+      });
+      setClientRates((hydratedRates || []).filter(r => (r.status === 'Active' || !r.status)));
     } catch (error) {
       console.error('Error loading data:', error);
       // Fallback to localStorage
@@ -464,25 +634,57 @@ export default function FTLBookingForm() {
       const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
       
       const combinedClients = [...storedClients, ...allClients];
-      const activeTbbClients = combinedClients.filter(c => 
-        c.status === 'Active' && c.clientType === 'TBB'
-      );
-      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
-        index === self.findIndex(c => c.id === client.id)
-      );
+
+      const normalizedClients = (combinedClients || []).map(c => {
+        if (!c) return null;
+        let primaryContact = c.primaryContact;
+        if (typeof primaryContact === 'string') {
+          try { primaryContact = JSON.parse(primaryContact); } catch (e) { primaryContact = {}; }
+        }
+        if (!primaryContact || typeof primaryContact !== 'object') primaryContact = {};
+        if (!primaryContact.name && c.contactPerson) primaryContact.name = c.contactPerson;
+        if (!primaryContact.mobile && c.mobile) primaryContact.mobile = c.mobile;
+        if (!primaryContact.email && c.email) primaryContact.email = c.email;
+
+        return {
+          ...c,
+          code: c.code || c.clientCode || c.client_code,
+          clientCode: c.clientCode || c.code || c.client_code,
+          companyName: c.companyName || c.clientName || c.client_name,
+          clientName: c.clientName || c.companyName || c.client_name,
+          primaryContact,
+        };
+      }).filter(Boolean);
+
+      const uniqByKey = (arr) => {
+        const seen = new Set();
+        return (arr || []).filter(item => {
+          const key = (item.id ?? item.code ?? item.clientCode ?? '').toString();
+          if (!key) return true;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
+
+      const activeTbbClients = normalizedClients.filter(c => {
+        const ct = (c.clientType || '').toString().toUpperCase();
+        return (c.status === 'Active' || !c.status) && (!ct || ct === 'TBB');
+      });
+      const uniqueTbbClients = uniqByKey(activeTbbClients);
       setTbbClients(uniqueTbbClients);
-      const sundryCreditors = combinedClients.filter(c => 
-        c.status === 'Active' && 
-        (c.clientType === 'TBB' || c.clientType === 'Credit')
-      );
-      const uniqueSundryCreditors = sundryCreditors.filter((client, index, self) =>
-        index === self.findIndex(c => c.id === client.id)
-      );
+
+      const sundryCreditors = normalizedClients.filter(c => {
+        const ct = (c.clientType || '').toString().toUpperCase();
+        return (c.status === 'Active' || !c.status) && (!ct || ct === 'TBB' || ct === 'CREDIT');
+      });
+      const uniqueSundryCreditors = uniqByKey(sundryCreditors);
       setSundryCreditorClients(uniqueSundryCreditors);
+
       setCities(storedCities.filter(c => c.status === 'Active'));
       setVehicles(storedVehicles.filter(v => v.status === 'Active'));
       setBranches(storedBranches.filter(b => b.status === 'Active'));
-      setClientRates(storedClientRates.filter(r => r.status === 'Active'));
+      setClientRates(storedClientRates.filter(r => (r.status === 'Active' || !r.status)));
     }
   };
 
@@ -1001,53 +1203,126 @@ export default function FTLBookingForm() {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // Save LR to localStorage
-    const existingLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    const newLR = {
-      id: Date.now(),
-      ...formData,
-      cftEntries: cftEntries, // Include CFT entries for dimensions
-      status: 'Booked',
-      createdAt: new Date().toISOString()
-    };
-    
-    existingLRs.push(newLR);
-    localStorage.setItem('lrBookings', JSON.stringify(existingLRs));
-    
-    // Create ledger entries for Sundry Creditor payment mode
-    if (formData.paymentMode === 'SundryCreditor') {
-      try {
-        createSundryCreditorLedger(newLR);
-      } catch (error) {
-        console.error('Error creating Sundry Creditor ledger entries:', error);
+
+    try {
+      // Save LR to server (FTL table)
+      const syncService = (await import('./utils/sync-service')).default;
+
+      // If Cash/ToPay: auto-create/find a client (Sundry client) so Payment Collection can pick it
+      let cashClientId = formData.cashToPayClientId || '';
+      const cashName = (formData.cashToPayClientName || '').toString().trim();
+      if ((formData.paymentMode === 'Paid' || formData.paymentMode === 'ToPay') && cashName) {
+        const desiredType = formData.paymentMode === 'Paid' ? 'Cash' : 'ToPay';
+        const existing = (allClients || []).find(c => {
+          const n = (c.companyName || c.clientName || '').toString().trim().toLowerCase();
+          const t = (c.clientType || c.clientType || '').toString().trim().toUpperCase();
+          return n === cashName.toLowerCase() && t === desiredType.toUpperCase();
+        });
+        if (existing?.id) {
+          cashClientId = existing.id;
+        } else {
+          const created = await syncService.save('clients', {
+            clientName: cashName,
+            clientType: desiredType,
+            status: 'Active',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+          const createdRow = created?.data || created;
+          if (createdRow?.id) cashClientId = createdRow.id;
+        }
       }
-    }
-    
-    // Update FTL Inquiry with LR booking reference if inquiry exists
-    const selectedInquiryData = localStorage.getItem('selectedFTLInquiry');
-    if (selectedInquiryData) {
+
+      const payload = {
+        ...formData,
+        bookingMode: 'FTL',
+        cftEntries: cftEntries, // include dimensions
+        status: 'Booked',
+        createdAt: new Date().toISOString(),
+        customerClientId: formData.paymentMode === 'TBB' ? formData.tbbClient : cashClientId,
+        customerClientType: formData.paymentMode === 'TBB' ? 'TBB' : (formData.paymentMode === 'ToPay' ? 'ToPay' : (formData.paymentMode === 'Paid' ? 'Cash' : '')),
+        customerClientName: formData.paymentMode === 'TBB'
+          ? (selectedClient?.companyName || selectedClient?.clientName || '')
+          : cashName,
+      };
+
+      const saved = await syncService.save('ftlLRBookings', payload);
+      const savedLR = saved?.data || saved;
+
+      // If LR was issued from series, advance the series counters
       try {
-        const inquiry = JSON.parse(selectedInquiryData);
-        const inquiries = JSON.parse(localStorage.getItem('ftlInquiries') || '[]');
-        const updatedInquiries = inquiries.map(i =>
-          i.id === inquiry.id
-            ? { ...i, lrBookingId: newLR.id, lrNumber: newLR.lrNumber }
-            : i
-        );
-        localStorage.setItem('ftlInquiries', JSON.stringify(updatedInquiries));
-        localStorage.removeItem('selectedFTLInquiry');
-      } catch (error) {
-        console.error('Error updating inquiry:', error);
+        if (formData.lrMode === 'manual') {
+          const branchId = formData.branch || (currentUser?.branch ? currentUser.branch.toString() : '');
+          const assigned = getAssignedSeriesForBranch(branchId);
+          if (assigned) {
+            const start = parseInt(assigned.startNumber, 10);
+            const end = parseInt(assigned.endNumber, 10);
+            const current = parseInt(formData.lrNumber, 10);
+            const used = parseInt(assigned.usedNumbers || '0', 10) || 0;
+            const total = parseInt(assigned.totalNumbers || '0', 10) || (end && start ? (end - start + 1) : 0);
+
+            if (!Number.isNaN(current) && current >= start && current <= end) {
+              const next = current + 1;
+              const nextCurrent = next <= end ? String(next).padStart(10, '0') : String(next);
+              const updatedSeries = (lrSeries || []).map(s => {
+                if (s.id === assigned.id) {
+                  const newUsed = String(used + 1);
+                  const remaining = total ? String(Math.max(0, total - (used + 1))) : s.remainingNumbers;
+                  return {
+                    ...s,
+                    currentNumber: next <= end ? nextCurrent : s.currentNumber,
+                    usedNumbers: newUsed,
+                    remainingNumbers: remaining,
+                  };
+                }
+                return s;
+              });
+              localStorage.setItem('lrSeries', JSON.stringify(updatedSeries));
+              setLrSeries(updatedSeries);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Could not update LR series counters:', e);
       }
+
+      // Create ledger entries for Sundry Creditor payment mode
+      if (formData.paymentMode === 'SundryCreditor') {
+        try {
+          createSundryCreditorLedger(savedLR);
+        } catch (error) {
+          console.error('Error creating Sundry Creditor ledger entries:', error);
+        }
+      }
+
+      // Update FTL Inquiry with LR booking reference if inquiry exists (local helper)
+      const selectedInquiryData = localStorage.getItem('selectedFTLInquiry');
+      if (selectedInquiryData) {
+        try {
+          const inquiry = JSON.parse(selectedInquiryData);
+          const inquiries = JSON.parse(localStorage.getItem('ftlInquiries') || '[]');
+          const updatedInquiries = inquiries.map(i =>
+            i.id === inquiry.id
+              ? { ...i, lrBookingId: savedLR?.id, lrNumber: savedLR?.lrNumber }
+              : i
+          );
+          localStorage.setItem('ftlInquiries', JSON.stringify(updatedInquiries));
+          localStorage.removeItem('selectedFTLInquiry');
+        } catch (error) {
+          console.error('Error updating inquiry:', error);
+        }
+      }
+
+      setSavedLRId(savedLR?.id || null);
+      setShowPrintView(true);
+
+      alert('✅ FTL LR saved successfully! Opening print view...');
+    } catch (err) {
+      console.error('Error saving FTL LR:', err);
+      alert(`❌ Failed to save FTL LR: ${err.message || 'Unknown error'}`);
     }
-    
-    setSavedLRId(newLR.id);
-    setShowPrintView(true);
-    
-    alert('✅ LR Booking saved successfully! Opening print view...');
   };
 
   return (
@@ -1309,14 +1584,45 @@ export default function FTLBookingForm() {
                   <button
                     type="button"
                     className={`toggle-btn ${formData.lrMode === 'auto' ? 'active' : ''}`}
-                    onClick={() => setFormData(prev => ({ ...prev, lrMode: 'auto' }))}
+                    onClick={() => {
+                      setFormData(prev => ({ ...prev, lrMode: 'auto', lrNumber: '' }));
+                    }}
                   >
                     Auto Generate
                   </button>
                   <button
                     type="button"
                     className={`toggle-btn ${formData.lrMode === 'manual' ? 'active' : ''}`}
-                    onClick={() => setFormData(prev => ({ ...prev, lrMode: 'manual', lrNumber: '' }))}
+                    onClick={() => {
+                      const branchId = formData.branch || (currentUser?.branch ? currentUser.branch.toString() : '');
+                      const assigned = getAssignedSeriesForBranch(branchId);
+                      if (!assigned) {
+                        alert('⚠️ Manual LR series not issued\n\nPlease assign LR series from LR Series Master first, or use Auto Generate mode.');
+                        return;
+                      }
+                      const start10 = normalizeLR10Digits(assigned.startNumber);
+                      const end10 = normalizeLR10Digits(assigned.endNumber);
+                      const curr10 = normalizeLR10Digits(assigned.currentNumber || assigned.startNumber || '');
+
+                      const within = (cand, s, e) => {
+                        const c = parseInt(cand, 10);
+                        const ss = parseInt(s, 10);
+                        const ee = parseInt(e, 10);
+                        if ([c, ss, ee].some(n => Number.isNaN(n))) return false;
+                        return c >= ss && c <= ee;
+                      };
+
+                      const suggested = (start10 && end10 && curr10 && curr10.length === 10 && within(curr10, start10, end10))
+                        ? curr10
+                        : start10;
+
+                      if (!suggested || suggested.length !== 10) {
+                        alert('⚠️ Invalid LR Series.\n\nPlease open LR Series Master and ensure Start/End/Current are 10-digit LR numbers.');
+                        return;
+                      }
+
+                      setFormData(prev => ({ ...prev, lrMode: 'manual', lrNumber: suggested }));
+                    }}
                   >
                     Manual Entry
                   </button>
@@ -1363,6 +1669,18 @@ export default function FTLBookingForm() {
                 />
               </div>
             </div>
+            
+            <div className="grid-3" style={{ marginTop: '16px' }}>
+              <div className="input-group">
+                <label>Reference Number</label>
+                <input
+                  type="text"
+                  value={formData.referenceNumber || ''}
+                  onChange={(e) => setFormData(prev => ({ ...prev, referenceNumber: e.target.value }))}
+                  placeholder="PO/Order/Ref No (optional)"
+                />
+              </div>
+            </div>
 
             <div className="input-group" style={{ marginTop: '16px' }}>
               <label>Booking Branch *</label>
@@ -1388,8 +1706,10 @@ export default function FTLBookingForm() {
                       setFormData(prev => ({ ...prev, branch: branchId }));
                     }}
                     required
-                    disabled={!isAdmin && formData.branch !== ''} // Disable if not admin and branch is already selected
-                    style={!isAdmin && formData.branch !== '' ? { background: '#f3f4f6', cursor: 'not-allowed' } : {}}
+                    disabled={(!isAdmin && formData.branch !== '') || (isAdmin && !!localStorage.getItem('adminSelectedBranch'))}
+                    style={((!isAdmin && formData.branch !== '') || (isAdmin && !!localStorage.getItem('adminSelectedBranch')))
+                      ? { background: '#f3f4f6', cursor: 'not-allowed' }
+                      : {}}
                   >
                     <option value="">-- Select Branch --</option>
                     {branches.map(branch => (
@@ -1640,7 +1960,9 @@ export default function FTLBookingForm() {
                       paymentMode: newMode,
                       // Clear client selection when switching modes
                       tbbClient: newMode !== 'TBB' ? '' : prev.tbbClient,
-                      sundryCreditor: newMode !== 'SundryCreditor' ? '' : prev.sundryCreditor
+                      sundryCreditor: newMode !== 'SundryCreditor' ? '' : prev.sundryCreditor,
+                      cashToPayClientName: (newMode === 'Paid' || newMode === 'ToPay') ? prev.cashToPayClientName : '',
+                      cashToPayClientId: (newMode === 'Paid' || newMode === 'ToPay') ? prev.cashToPayClientId : '',
                     }));
                     if (newMode !== 'TBB') setSelectedClient(null);
                     if (newMode !== 'SundryCreditor') setSelectedSundryCreditor(null);
@@ -1717,7 +2039,35 @@ export default function FTLBookingForm() {
                           const clientId = e.target.value;
                           const client = tbbClients.find(c => c.id.toString() === clientId);
                           setSelectedClient(client);
-                          setFormData(prev => ({ ...prev, tbbClient: clientId }));
+                          const addrRaw = client?.address;
+                          let addr = '';
+                          if (addrRaw && typeof addrRaw === 'string') {
+                            addr = addrRaw;
+                          } else if (addrRaw && typeof addrRaw === 'object') {
+                            addr = [addrRaw.line1, addrRaw.line2, addrRaw.city, addrRaw.state, addrRaw.pincode, addrRaw.country]
+                              .filter(Boolean)
+                              .join(', ');
+                          }
+                          const pc = client?.primaryContact || {};
+                          const contact = pc.mobile || pc.phone || client?.mobile || '';
+                          const name = client?.companyName || client?.clientName || '';
+                          const gst = client?.gstNumber || '';
+                          setFormData(prev => ({
+                            ...prev,
+                            tbbClient: clientId,
+                            cashToPayClientName: '',
+                            cashToPayClientId: '',
+                            consignor: {
+                              ...prev.consignor,
+                              name: name || prev.consignor?.name || '',
+                              address: addr || prev.consignor?.address || '',
+                              gst: gst || prev.consignor?.gst || '',
+                              contact: contact || prev.consignor?.contact || '',
+                            },
+                            customerClientId: clientId,
+                            customerClientType: 'TBB',
+                            customerClientName: name || '',
+                          }));
                         }}
                         required
                       >
@@ -1743,12 +2093,47 @@ export default function FTLBookingForm() {
                             <div style={{ marginBottom: '4px' }}><strong>Trade Name:</strong> {selectedClient.tradeName}</div>
                           )}
                           <div className="mono" style={{ marginBottom: '4px' }}><strong>GST:</strong> {selectedClient.gstNumber}</div>
-                          <div style={{ marginBottom: '4px' }}><strong>Contact:</strong> {selectedClient.primaryContact.name} ({selectedClient.primaryContact.mobile})</div>
-                          <div><strong>Email:</strong> {selectedClient.primaryContact.email}</div>
+                          {(() => {
+                            const pc = selectedClient.primaryContact || {};
+                            const contactName = pc.name || selectedClient.contactPerson || 'N/A';
+                            const contactMobile = pc.mobile || selectedClient.mobile || 'N/A';
+                            const contactEmail = pc.email || selectedClient.email || 'N/A';
+                            return (
+                              <>
+                                <div style={{ marginBottom: '4px' }}>
+                                  <strong>Contact:</strong> {contactName} ({contactMobile})
+                                </div>
+                                <div><strong>Email:</strong> {contactEmail}</div>
+                              </>
+                            );
+                          })()}
                         </div>
                       )}
                     </>
                   )}
+              </div>
+            )}
+
+            {(formData.paymentMode === 'Paid' || formData.paymentMode === 'ToPay') && (
+              <div className="input-group">
+                <label>Client Name ({formData.paymentMode === 'Paid' ? 'Cash/Paid' : 'To Pay'})</label>
+                <input
+                  type="text"
+                  value={formData.cashToPayClientName}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFormData(prev => ({
+                      ...prev,
+                      cashToPayClientName: val,
+                      // Keep LR consignor name aligned so print/modify screens show the right party
+                      consignor: { ...prev.consignor, name: val || prev.consignor?.name || '' },
+                    }));
+                  }}
+                  placeholder="Enter client name (will be saved for advance collection)"
+                />
+                <small style={{ display: 'block', marginTop: '6px', color: '#64748b', fontSize: '0.8rem' }}>
+                  This name will be saved in Client Master as a Cash/ToPay (Sundry) client so you can collect/receive advance against this LR later.
+                </small>
               </div>
             )}
             
@@ -3190,6 +3575,7 @@ export default function FTLBookingForm() {
         }}>
           <LRPrintView 
             lrId={savedLRId} 
+            lrTable="ftlLRBookings"
             onClose={() => setShowPrintView(false)} 
           />
         </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Printer, X } from 'lucide-react';
 
-export default function LRPrintView({ lrId, onClose }) {
+export default function LRPrintView({ lrId, lrTable, onClose }) {
   const [lrData, setLrData] = useState(null);
   const [cities, setCities] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -10,36 +10,91 @@ export default function LRPrintView({ lrId, onClose }) {
   const [showAmountsInPrint, setShowAmountsInPrint] = useState(true);
 
   useEffect(() => {
-    const loadData = () => {
-      const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-      const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
-      const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-      const allClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
-      const allClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-      
-      setCities(allCities);
-      setBranches(allBranches);
-      setTbbClients(allClients);
-      setClientRates(allClientRates);
+    let isMounted = true;
 
-      const idToUse = lrId || sessionStorage.getItem('printLRId');
-      if (idToUse) {
-        const lr = allLRs.find(l => l.id.toString() === idToUse.toString());
-        if (lr) {
-          setLrData(lr);
+    const loadData = async () => {
+      try {
+        const syncService = (await import('./utils/sync-service')).default;
+        const databaseAPI = (await import('./utils/database-api')).default;
+
+        const [citiesRes, branchesRes, clientsRes, clientRatesRes] = await Promise.all([
+          syncService.load('cities').catch(() => ({ data: [] })),
+          syncService.load('branches').catch(() => ({ data: [] })),
+          syncService.load('clients').catch(() => ({ data: [] })),
+          syncService.load('clientRates').catch(() => ({ data: [] })),
+        ]);
+
+        const allCities = Array.isArray(citiesRes) ? citiesRes : (citiesRes?.data || []);
+        const allBranches = Array.isArray(branchesRes) ? branchesRes : (branchesRes?.data || []);
+        const allClients = Array.isArray(clientsRes) ? clientsRes : (clientsRes?.data || []);
+
+        if (!isMounted) return;
+        setCities(allCities || []);
+        setBranches(allBranches || []);
+        setTbbClients(allClients || []);
+
+        const parseMaybeJson = (value) => {
+          if (value == null) return value;
+          if (typeof value === 'object') return value;
+          if (typeof value !== 'string') return value;
+          const t = value.trim();
+          if (!t) return value;
+          try { return JSON.parse(t); } catch { return value; }
+        };
+        const rawRates = Array.isArray(clientRatesRes) ? clientRatesRes : (clientRatesRes?.data || []);
+        const hydratedRates = (rawRates || []).map(r => {
+          const payload = parseMaybeJson(r?.data);
+          if (payload && typeof payload === 'object') {
+            return { ...payload, id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, clientId: payload.clientId ?? r.clientId, clientCode: payload.clientCode ?? r.clientCode };
+          }
+          return r;
+        });
+        setClientRates(Array.isArray(hydratedRates) ? hydratedRates : []);
+
+        const idToUse = lrId || sessionStorage.getItem('printLRId');
+        if (!idToUse) return;
+
+        // Fetch LR from the correct table (FTL/PTL/base)
+        const tryTables = lrTable ? [lrTable] : ['lrBookings', 'ptlLRBookings', 'ftlLRBookings'];
+        let found = null;
+        for (const tbl of tryTables) {
+          try {
+            const row = await databaseAPI.getById(tbl, idToUse);
+            if (row && row.id != null) {
+              found = { ...row, __table: tbl };
+              break;
+            }
+          } catch (e) {
+            // ignore and try next
+          }
+        }
+        if (found && isMounted) setLrData(found);
+      } catch (e) {
+        // Fallback to localStorage (legacy)
+        const allLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+        const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
+        const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+        const allClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
+        const allClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
+
+        if (!isMounted) return;
+        setCities(allCities);
+        setBranches(allBranches);
+        setTbbClients(allClients);
+        setClientRates(allClientRates);
+
+        const idToUse = lrId || sessionStorage.getItem('printLRId');
+        if (idToUse) {
+          const lr = allLRs.find(l => l.id.toString() === idToUse.toString());
+          if (lr) setLrData(lr);
         }
       }
     };
-    
+
     loadData();
-    
-    const handleStorageChange = () => {
-      loadData();
-    };
-    
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, [lrId]);
+
+    return () => { isMounted = false; };
+  }, [lrId, lrTable]);
 
   useEffect(() => {
     if (lrData && lrData.paymentMode === 'TBB' && lrData.tbbClient && clientRates.length > 0 && cities.length > 0) {
@@ -188,15 +243,17 @@ export default function LRPrintView({ lrId, onClose }) {
     
     const totalGST = (subtotal * gstRate) / 100;
     
+    const originVal = lrData.origin || lrData.fromLocation;
+    const destVal = lrData.destination || lrData.toLocation;
     const originCity = cities.find(c => 
-      c.id?.toString() === lrData.origin?.toString() || 
-      c.code === lrData.origin || 
-      c.cityName === lrData.origin
+      c.id?.toString() === originVal?.toString() || 
+      c.code === originVal || 
+      c.cityName === originVal
     );
     const destCity = cities.find(c => 
-      c.id?.toString() === lrData.destination?.toString() || 
-      c.code === lrData.destination || 
-      c.cityName === lrData.destination
+      c.id?.toString() === destVal?.toString() || 
+      c.code === destVal || 
+      c.cityName === destVal
     );
     const isInterstate = originCity?.state !== destCity?.state;
     
@@ -208,8 +265,8 @@ export default function LRPrintView({ lrId, onClose }) {
   };
 
   const getOriginDestination = () => {
-    const originCity = getCityName(lrData.origin);
-    const destCity = getCityName(lrData.destination);
+    const originCity = getCityName(lrData.origin || lrData.fromLocation);
+    const destCity = getCityName(lrData.destination || lrData.toLocation);
     return `${originCity.toUpperCase()}-${destCity.toUpperCase()}`;
   };
 
@@ -280,13 +337,17 @@ export default function LRPrintView({ lrId, onClose }) {
     <div>
       <style>{`
         @media print {
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+          }
           body * {
             visibility: hidden;
           }
-          .lr-print-container, .lr-print-container * {
+          .lr-print-root, .lr-print-root * {
             visibility: visible;
           }
-          .lr-print-container {
+          .lr-print-root {
             position: absolute;
             left: 0;
             top: 0;
@@ -304,17 +365,20 @@ export default function LRPrintView({ lrId, onClose }) {
         
         .lr-print-page {
           width: 210mm;
+          height: 297mm;
           min-height: 297mm;
           margin: 0 auto;
           background: white;
-          padding: 4px;
+          /* reduced top space; keep 0.5cm left */
+          padding: 6mm 0 0 5mm;
           font-family: Arial, sans-serif;
           font-size: 10px;
           color: black;
           page-break-after: always;
           display: flex;
           flex-direction: column;
-          gap: 2px;
+          /* use explicit margin on second copy instead of flex gap */
+          gap: 0;
         }
         
         .lr-print-page:last-child {
@@ -323,14 +387,33 @@ export default function LRPrintView({ lrId, onClose }) {
         
         .lr-print-container {
           width: 100%;
-          flex: 1;
+          /* 297mm total - 6mm top padding - 3mm second-copy offset = 288mm usable for 2 copies */
+          flex: 0 0 144mm;
+          height: 144mm;
           background: white;
-          padding: 6px;
+          padding: 2px;
           font-family: Arial, sans-serif;
           font-size: 10px;
           color: black;
           border: 1px solid #ddd;
-          margin-bottom: 4px;
+          margin-bottom: 0;
+          break-inside: avoid;
+          page-break-inside: avoid;
+          overflow: hidden;
+          /* shrink content so both copies fit on one A4 */
+          transform: scale(0.95);
+          transform-origin: top left;
+        }
+
+        /* Allow POD footer to show (no clipping) */
+        .lr-copy-top {
+          overflow: visible;
+          transform: scale(0.945);
+        }
+
+        /* Move second copy slightly down to make room for POD footer */
+        .lr-copy-bottom {
+          margin-top: 3mm;
         }
         
         .lr-print-container:last-child {
@@ -382,15 +465,15 @@ export default function LRPrintView({ lrId, onClose }) {
         )}
       </div>
 
-      {/* Multiple Copies - Reorganized: Page 1: POD + Consignee, Page 2: Consignor + EDP */}
-      {/* Page 1: POD Copy and Consignee Copy */}
-      <div className="lr-print-page">
-        {/* POD Copy */}
-        <div className="lr-print-container">
+      <div className="lr-print-root">
+        {/* Two LR copies on one A4 page (top + bottom) */}
+        <div className="lr-print-page">
+          {/* POD Copy */}
+          <div className="lr-print-container lr-copy-top">
           {/* Company Header with Logo and Name */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', borderBottom: '2px solid #000', paddingBottom: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              {/* Logo Placeholder */}
+              {/* Logo */}
               <div style={{ 
                 width: '60px', 
                 height: '60px', 
@@ -399,12 +482,18 @@ export default function LRPrintView({ lrId, onClose }) {
                 alignItems: 'center', 
                 justifyContent: 'center',
                 background: '#f8fafc',
-                fontWeight: 'bold',
-                fontSize: '10px',
                 textAlign: 'center',
                 padding: '4px'
               }}>
-                LOGO
+                <img
+                  src="/brand-logo.png"
+                  alt="Company Logo"
+                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = '/logo192.png';
+                  }}
+                />
               </div>
               <div>
                 <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '2px' }}>MULTI MODE LOGISTICS (INDIA) PVT. LTD.</div>
@@ -432,7 +521,7 @@ export default function LRPrintView({ lrId, onClose }) {
               </tr>
               <tr>
                 <td style={{ padding: '3px', border: '1px solid #000' }}>{lrData.lrNumber || 'N/A'}</td>
-                <td style={{ padding: '3px', border: '1px solid #000' }}>{lrData.lrNumber || 'N/A'}</td>
+                <td style={{ padding: '3px', border: '1px solid #000' }}>{lrData.referenceNumber || '-'}</td>
                 <td style={{ padding: '3px', border: '1px solid #000' }}>{formatDateLong(lrData.bookingDate)}</td>
               </tr>
             </tbody>
@@ -597,14 +686,14 @@ export default function LRPrintView({ lrId, onClose }) {
               <div style={{ marginTop: '2px' }}>Auth. Signatory</div>
             </div>
           </div>
-        </div>
+          </div>
 
-        {/* Consignee Copy */}
-        <div className="lr-print-container">
+          {/* Consignor Copy */}
+          <div className="lr-print-container lr-copy-bottom">
           {/* Company Header with Logo and Name */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', borderBottom: '2px solid #000', paddingBottom: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              {/* Logo Placeholder */}
+              {/* Logo */}
               <div style={{ 
                 width: '60px', 
                 height: '60px', 
@@ -613,12 +702,18 @@ export default function LRPrintView({ lrId, onClose }) {
                 alignItems: 'center', 
                 justifyContent: 'center',
                 background: '#f8fafc',
-                fontWeight: 'bold',
-                fontSize: '10px',
                 textAlign: 'center',
                 padding: '4px'
               }}>
-                LOGO
+                <img
+                  src="/brand-logo.png"
+                  alt="Company Logo"
+                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = '/logo192.png';
+                  }}
+                />
               </div>
               <div>
                 <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '2px' }}>MULTI MODE LOGISTICS (INDIA) PVT. LTD.</div>
@@ -632,7 +727,7 @@ export default function LRPrintView({ lrId, onClose }) {
           
           {/* Copy Label at Top */}
           <div style={{ textAlign: 'center', marginBottom: '8px', fontSize: '12px', fontWeight: 'bold', borderBottom: '1px solid #000', paddingBottom: '4px' }}>
-            Consignee Copy
+            Consignor Copy
           </div>
           
           {/* Docket No, Ref No, Date */}
@@ -645,7 +740,7 @@ export default function LRPrintView({ lrId, onClose }) {
               </tr>
               <tr>
                 <td style={{ padding: '3px', border: '1px solid #000' }}>{lrData.lrNumber || 'N/A'}</td>
-                <td style={{ padding: '3px', border: '1px solid #000' }}>{lrData.lrNumber || 'N/A'}</td>
+                <td style={{ padding: '3px', border: '1px solid #000' }}>{lrData.referenceNumber || '-'}</td>
                 <td style={{ padding: '3px', border: '1px solid #000' }}>{formatDateLong(lrData.bookingDate)}</td>
               </tr>
             </tbody>
@@ -691,27 +786,125 @@ export default function LRPrintView({ lrId, onClose }) {
             </tbody>
           </table>
 
-          {/* Freight Details Table - Simplified for Consignee */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '6px', fontSize: '9px' }}>
+          {/* Shipment Details Table (same fields as POD copy) */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '5px', fontSize: '8px' }}>
+            <thead>
+              <tr>
+                <th style={{ padding: '3px', border: '1px solid #000' }}>No Of Pkgs.</th>
+                <th style={{ padding: '3px', border: '1px solid #000' }}>Actual Weight (Kgs)</th>
+                <th style={{ padding: '3px', border: '1px solid #000' }}>Charged Weight</th>
+                <th style={{ padding: '3px', border: '1px solid #000' }}>Invoice No</th>
+                <th style={{ padding: '3px', border: '1px solid #000' }}>Invoice Value</th>
+                <th style={{ padding: '3px', border: '1px solid #000' }}>E-Way Bill No</th>
+                <th style={{ padding: '3px', border: '1px solid #000' }}>Description Of Goods</th>
+                <th style={{ padding: '3px', border: '1px solid #000' }}>Quantity</th>
+              </tr>
+            </thead>
             <tbody>
               <tr>
-                <td style={{ width: '25%', padding: '3px', border: '1px solid #000' }}><strong>Freight Type</strong></td>
-                <td style={{ width: '25%', padding: '3px', border: '1px solid #000' }}><strong>Freight Charge</strong></td>
-                <td style={{ width: '25%', padding: '3px', border: '1px solid #000' }}><strong>Other Charges</strong></td>
-                <td style={{ width: '25%', padding: '3px', border: '1px solid #000' }}><strong>DocketCharge</strong></td>
-              </tr>
-              <tr>
-                <td style={{ padding: '3px', border: '1px solid #000' }}>SUNDRY</td>
-                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? (parseFloat(lrData.charges?.freightRate) || 0).toFixed(2) : '---'}</td>
-                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? (parseFloat(lrData.charges?.other) || 0).toFixed(2) : '---'}</td>
-                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? (parseFloat(lrData.charges?.lrCharges) || 0).toFixed(2) : '---'}</td>
+                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'center' }}>{lrData.pieces || '0'}</td>
+                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'center' }}>{lrData.weight || '0'}</td>
+                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'center' }}>{chargedWeight}</td>
+                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'center' }}>{lrData.invoices?.[0]?.number || '0'}</td>
+                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'center' }}>0</td>
+                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'center' }}>{lrData.ewaybills?.[0]?.number || '0'}</td>
+                <td style={{ padding: '3px', border: '1px solid #000' }}>{getDescriptionOfGoods()}</td>
+                <td style={{ padding: '3px', border: '1px solid #000', textAlign: 'center' }}>{lrData.pieces || '0'}</td>
               </tr>
             </tbody>
           </table>
 
-          {/* Footer for Consignee */}
-          <div style={{ fontSize: '8px', marginTop: '8px', textAlign: 'right' }}>
-            <div>Seal Of The Company _________ Time: ______</div>
+          {/* Mode of Delivery, Booking, Type, Dimension (same as POD copy) */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '5px', fontSize: '8px' }}>
+            <tbody>
+              <tr>
+                <td style={{ width: '25%', padding: '3px', border: '1px solid #000' }}><strong>Mode of Delivery</strong></td>
+                <td style={{ width: '25%', padding: '3px', border: '1px solid #000' }}><strong>Mode of Booking</strong></td>
+                <td style={{ width: '25%', padding: '3px', border: '1px solid #000' }}><strong>Booking Type</strong></td>
+                <td style={{ width: '25%', padding: '3px', border: '1px solid #000' }}><strong>Dimension</strong></td>
+              </tr>
+              <tr>
+                <td style={{ padding: '3px', border: '1px solid #000' }}>
+                  {lrData.deliveryType === 'Door' ? 'Door Delivery' : (
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#000' }}>GODOWN DELIVERY</span>
+                  )}
+                </td>
+                <td style={{ padding: '3px', border: '1px solid #000' }}>{getModeOfBooking()}</td>
+                <td style={{ padding: '3px', border: '1px solid #000' }}>
+                  {lrData.paymentMode === 'Paid' ? (
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#000' }}>PAID</span>
+                  ) : lrData.paymentMode === 'ToPay' ? (
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#000' }}>TO PAY</span>
+                  ) : (
+                    getBookingType()
+                  )}
+                </td>
+                <td style={{ padding: '3px', border: '1px solid #000' }}>{getDimensionString()}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* Terms and Conditions */}
+          <div style={{ fontSize: '7px', marginBottom: '5px', lineHeight: '1.2' }}>
+            <div>Our liability for any loss or damage to the shipment is to the extent of Rs. 100/- only.</div>
+            <div>All disputes are subject to the jurisdiction of Indore station courts only.</div>
+            <div>This is a non-negotiable Consignment Note. Thereby declare:</div>
+            <div>(1) That this consignment does not contain currency notes, jewellery, contraband, explosives etc.</div>
+            <div>(2) That I have read the terms & conditions of carriage as given on reverse of the Shipper's Copy of Consignment Note and abide by the same.</div>
+          </div>
+
+          {/* Freight Details Table (full, like POD copy) */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '4px', fontSize: '8px' }}>
+            <tbody>
+              <tr>
+                <td style={{ width: '20%', padding: '2px 3px', border: '1px solid #000' }}><strong>Freight Type</strong></td>
+                <td style={{ width: '20%', padding: '2px 3px', border: '1px solid #000' }}><strong>Freight Charge</strong></td>
+                <td style={{ width: '20%', padding: '2px 3px', border: '1px solid #000' }}><strong>Other Charges</strong></td>
+                <td style={{ width: '20%', padding: '2px 3px', border: '1px solid #000' }}><strong>Docket Charge</strong></td>
+                <td style={{ width: '20%', padding: '2px 3px', border: '1px solid #000' }}><strong>Total Freight</strong></td>
+              </tr>
+              <tr>
+                <td style={{ padding: '2px 3px', border: '1px solid #000' }}>SUNDRY</td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? (parseFloat(lrData.charges?.freightRate) || 0).toFixed(2) : '---'}</td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? (parseFloat(lrData.charges?.other) || 0).toFixed(2) : '---'}</td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? (parseFloat(lrData.charges?.lrCharges) || 0).toFixed(2) : '---'}</td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? subtotal.toFixed(2) : '---'}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: '2px 3px', border: '1px solid #000' }}><strong>IGST %</strong></td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? gstBreakdown.igst.toFixed(2) : '---'}</td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000' }}><strong>CGST %</strong></td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? gstBreakdown.cgst.toFixed(2) : '---'}</td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000' }}><strong>SGST %</strong></td>
+              </tr>
+              <tr>
+                <td colSpan="4" style={{ padding: '2px 3px', border: '1px solid #000' }}><strong>Grand Total</strong></td>
+                <td style={{ padding: '2px 3px', border: '1px solid #000', textAlign: 'right' }}>{showAmountsInPrint ? grandTotal.toFixed(2) : '---'}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          {/* Consignment Acknowledgement */}
+          <div style={{ fontSize: '7px', marginBottom: '4px', lineHeight: '1.15' }}>
+            <div><strong>Consignment Acknowledgement by consignee:</strong> We have verified the weight & received cargo with Documents in good condition.</div>
+            <div style={{ marginTop: '4px', display: 'flex', justifyContent: 'space-between' }}>
+              <div>Signature ___________ Date: ______</div>
+              <div>Seal Of The Company _________ Time: ______</div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div style={{ fontSize: '7px', marginTop: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+            <div>
+              <div><strong>Freight Detail :</strong> As Per Terms</div>
+              <div><strong>Remarks :</strong></div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div>For : Multi Mode Logistics (India) Pvt Ltd.</div>
+              <div style={{ marginTop: '8px' }}>SHIV DEV SINGH</div>
+              <div style={{ marginTop: '2px' }}>Auth. Signatory</div>
+            </div>
+          </div>
           </div>
         </div>
       </div>

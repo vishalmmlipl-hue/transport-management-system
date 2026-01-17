@@ -41,43 +41,117 @@ export default function BranchDayBook() {
   const [viewingScreenshot, setViewingScreenshot] = useState(null);
 
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
-    setCurrentUser(user);
-    
-    const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    setBranches(allBranches.filter(b => b.status === 'Active'));
-    
-    const allBranchAccounts = JSON.parse(localStorage.getItem('branchAccounts') || '[]');
-    setBranchAccounts(allBranchAccounts.filter(a => a.status === 'Active'));
-    
-    const allExpenses = JSON.parse(localStorage.getItem('branchExpenses') || '[]');
-    setExpenses(allExpenses);
-    
-    const allExpenseMaster = JSON.parse(localStorage.getItem('expenseMaster') || '[]');
-    setExpenseMaster(allExpenseMaster.filter(em => em.status === 'Active'));
-    
-    const allAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
-    setAccounts(allAccounts.filter(a => a.status === 'Active'));
-    
-    // Check if admin
-    const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
-    const systemUser = systemUsers.find(u => u.username === user?.username);
-    const userRole = systemUser?.userRole || user?.role || '';
-    const adminStatus = userRole === 'Admin' || userRole === 'admin';
-    setIsAdmin(adminStatus);
-    
-    // Auto-select branch for non-admin users
-    if (user && !adminStatus) {
-      if (user.branch) {
-        const branch = allBranches.find(b => 
-          b.id.toString() === user.branch.toString() || 
-          b.branchCode === user.branch
-        );
-        if (branch) {
-          setSelectedBranch(branch);
+    const loadInitial = async () => {
+      const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
+      setCurrentUser(user);
+
+      // Load branches from server (fallback to localStorage)
+      let allBranches = [];
+      try {
+        const syncService = (await import('./utils/sync-service')).default;
+        const res = await syncService.load('branches');
+        allBranches = Array.isArray(res) ? res : (res?.data || []);
+        localStorage.setItem('branches', JSON.stringify(allBranches || []));
+      } catch (e) {
+        allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+      }
+      const activeBranches = (allBranches || []).filter(b => b.status === 'Active' || !b.status);
+      setBranches(activeBranches);
+      
+      // Load branchAccounts from server (fallback to localStorage)
+      try {
+        const syncService = (await import('./utils/sync-service')).default;
+        const result = await syncService.load('branchAccounts');
+        const list = Array.isArray(result) ? result : (result?.data || []);
+        const active = (list || []).filter(a => !a.status || a.status === 'Active');
+        setBranchAccounts(active);
+        localStorage.setItem('branchAccounts', JSON.stringify(active));
+      } catch (e) {
+        const allBranchAccounts = JSON.parse(localStorage.getItem('branchAccounts') || '[]');
+        setBranchAccounts(allBranchAccounts.filter(a => a.status === 'Active'));
+      }
+      
+      // Load branchExpenses from server (fallback to localStorage)
+      try {
+        const syncService = (await import('./utils/sync-service')).default;
+        const result = await syncService.load('branchExpenses');
+        const list = Array.isArray(result) ? result : (result?.data || []);
+        setExpenses(list);
+      } catch (e) {
+        setExpenses(JSON.parse(localStorage.getItem('branchExpenses') || '[]'));
+      }
+      
+      const allExpenseMaster = JSON.parse(localStorage.getItem('expenseMaster') || '[]');
+      setExpenseMaster(allExpenseMaster.filter(em => em.status === 'Active'));
+      
+      const allAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
+      setAccounts(allAccounts.filter(a => a.status === 'Active'));
+      
+      // Check if admin
+      const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
+      const systemUser = systemUsers.find(u => u.username === user?.username);
+      const userRole = systemUser?.userRole || user?.role || '';
+      const adminStatus = userRole === 'Admin' || userRole === 'admin' || userRole === 'Super Admin' || userRole === 'super admin';
+      setIsAdmin(adminStatus);
+
+      // For admin: preselect dashboard-selected branch (if any)
+      if (adminStatus) {
+        const adminBranchId = localStorage.getItem('adminSelectedBranch');
+        if (adminBranchId) {
+          const branch = activeBranches.find(b =>
+            b.id?.toString?.() === adminBranchId.toString() || b.branchCode === adminBranchId.toString()
+          );
+          if (branch) setSelectedBranch(branch);
+        }
+      } else {
+        // Non-admin: auto-select assigned branch; do not allow seeing other branches
+        const userBranchId = systemUser?.branch || user?.branch;
+        if (userBranchId) {
+          const branch = activeBranches.find(b =>
+            b.id?.toString?.() === userBranchId.toString() || b.branchCode === userBranchId.toString()
+          );
+          if (branch) setSelectedBranch(branch);
         }
       }
-    }
+    };
+    
+    loadInitial();
+  }, []);
+
+  // React to Admin changing branch in dashboard/topbar
+  useEffect(() => {
+    if (!isAdmin) return;
+    const onChanged = (e) => {
+      const id = e?.detail?.branchId ? String(e.detail.branchId) : '';
+      if (!id) {
+        setSelectedBranch(null);
+        return;
+      }
+      const b = (branches || []).find(x => String(x.id) === id);
+      if (b) setSelectedBranch(b);
+    };
+    window.addEventListener('adminBranchChanged', onChanged);
+    return () => window.removeEventListener('adminBranchChanged', onChanged);
+  }, [isAdmin, branches]);
+
+  // Refresh expenses when any module posts to server
+  useEffect(() => {
+    const reloadExpenses = async () => {
+      try {
+        const syncService = (await import('./utils/sync-service')).default;
+        const result = await syncService.load('branchExpenses');
+        const list = Array.isArray(result) ? result : (result?.data || []);
+        setExpenses(list);
+      } catch (e) {
+        // ignore
+      }
+    };
+    window.addEventListener('branchExpenseCreated', reloadExpenses);
+    window.addEventListener('dataSyncedFromServer', reloadExpenses);
+    return () => {
+      window.removeEventListener('branchExpenseCreated', reloadExpenses);
+      window.removeEventListener('dataSyncedFromServer', reloadExpenses);
+    };
   }, []);
 
   useEffect(() => {
@@ -231,8 +305,7 @@ export default function BranchDayBook() {
     });
     
     // Get expenses
-    const allExpenses = JSON.parse(localStorage.getItem('branchExpenses') || '[]');
-    const dayExpenses = allExpenses.filter(exp => 
+    const dayExpenses = (expenses || []).filter(exp => 
       exp.branch?.toString() === branchId && exp.expenseDate === date
     );
     
@@ -263,7 +336,7 @@ export default function BranchDayBook() {
     };
   };
 
-  const handleAddExpense = (e) => {
+  const handleAddExpense = async (e) => {
     e.preventDefault();
     
     if (!expenseForm.expenseCategory || !expenseForm.expenseType) {
@@ -300,8 +373,8 @@ export default function BranchDayBook() {
       return expenseType ? expenseType.expenseHead : null;
     };
 
-    const allExpenses = JSON.parse(localStorage.getItem('branchExpenses') || '[]');
-    const expenseNo = `EXP${String(allExpenses.length + 1).padStart(6, '0')}`;
+    // Use timestamp-based number to avoid UNIQUE collisions across users/browsers
+    const expenseNo = `EXP${Date.now()}`;
     
     const newExpense = {
       id: Date.now(),
@@ -329,9 +402,17 @@ export default function BranchDayBook() {
       status: 'Active'
     };
 
-    const updatedExpenses = [...expenses, newExpense];
-    localStorage.setItem('branchExpenses', JSON.stringify(updatedExpenses));
+    // Save to server (fallback to localStorage handled by syncService)
+    try {
+      const syncService = (await import('./utils/sync-service')).default;
+      await syncService.save('branchExpenses', newExpense);
+      window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+    } catch (e2) {
+      // If API fails, keep local state update so UI still shows it
+    }
+    const updatedExpenses = [...(expenses || []), newExpense];
     setExpenses(updatedExpenses);
+    window.dispatchEvent(new CustomEvent('branchExpenseCreated', { detail: { expense: newExpense } }));
 
     // Create ledger entries
     try {

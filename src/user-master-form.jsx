@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, User, Eye, EyeOff, Edit2, Trash2, Ban, CheckCircle, Search, Plus, X } from 'lucide-react';
+import { apiService } from './utils/apiService';
 
 export default function UserMasterForm() {
   const [branches, setBranches] = useState([]);
@@ -10,30 +11,62 @@ export default function UserMasterForm() {
   const [editingUserId, setEditingUserId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
   
-  // Load branches and staff from localStorage
+  // Load branches and staff from API
   useEffect(() => {
-    const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const storedStaff = JSON.parse(localStorage.getItem('staff') || '[]');
-    
-    const activeBranches = storedBranches.filter(b => b.status === 'Active');
-    setBranches(activeBranches);
-    
-    const activeStaff = storedStaff.filter(s => s.status === 'Active');
-    setStaff(activeStaff);
-    
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const [branchesResult, staffResult] = await Promise.all([
+          apiService.getBranches().catch(() => ({ data: [] })),
+          apiService.getStaff().catch(() => ({ data: [] }))
+        ]);
+
+        const branchesData = branchesResult?.data || branchesResult || [];
+        const staffData = staffResult?.data || staffResult || [];
+
+        // Filter active branches and clean branch names
+        const activeBranches = branchesData
+          .filter(b => b.status === 'Active' || !b.status || b.status === undefined)
+          .map(branch => ({
+            ...branch,
+            branchName: branch.branchName ? branch.branchName.trim().replace(/0+$/, '').trim() : branch.branchName
+          }));
+        setBranches(activeBranches);
+        
+        // Filter active staff
+        const activeStaff = staffData.filter(s => s.status === 'Active' || !s.status || s.status === undefined);
+        setStaff(activeStaff);
+      } catch (error) {
+        console.error('Error loading branches/staff:', error);
+        setBranches([]);
+        setStaff([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
     loadUsers();
   }, []);
 
+  // Reload users when tab changes to view
+  useEffect(() => {
+    if (activeTab === 'view') {
+      loadUsers();
+    }
+  }, [activeTab]);
+
   const loadUsers = async () => {
     try {
-      // Try to load from server first
-      const syncService = (await import('./utils/sync-service')).default;
-      const result = await syncService.load('users');
-      if (result.synced && result.data) {
-        setUsers(result.data);
+      setLoading(true);
+      // Try to load from API first
+      const usersData = await apiService.getUsers();
+      if (usersData && usersData.length >= 0) {
+        setUsers(usersData);
         // Update localStorage with server data
-        localStorage.setItem('users', JSON.stringify(result.data));
+        localStorage.setItem('users', JSON.stringify(usersData));
       } else {
         // Fallback to localStorage
         const storedUsers = JSON.parse(localStorage.getItem('users') || '[]');
@@ -44,9 +77,13 @@ export default function UserMasterForm() {
       // Fallback to localStorage
       const storedUsers = JSON.parse(localStorage.getItem('users') || '[]');
       setUsers(storedUsers);
+    } finally {
+      setLoading(false);
     }
   };
 
+  const [assignAllBranches, setAssignAllBranches] = useState(false);
+  
   const [formData, setFormData] = useState({
     userCode: '',
     username: '',
@@ -214,14 +251,20 @@ export default function UserMasterForm() {
         });
     }
     
+    // Reset branch assignment when role changes
+    const isAdminRole = role === 'Super Admin' || role === 'Admin';
+    
     setFormData(prev => ({
       ...prev,
       userRole: role,
-      accessPermissions: defaultPermissions
+      accessPermissions: defaultPermissions,
+      branch: isAdminRole ? 'all' : ''
     }));
+    setAssignAllBranches(isAdminRole);
   };
 
   const resetForm = () => {
+    setAssignAllBranches(false);
     setFormData({
       userCode: '',
       username: '',
@@ -256,6 +299,10 @@ export default function UserMasterForm() {
 
   const handleEdit = (user) => {
     setEditingUserId(user.id);
+    const isAdminRole = user.userRole === 'Super Admin' || user.userRole === 'Admin';
+    const hasAllBranches = user.branch === 'all' || user.branch === 'ALL';
+    setAssignAllBranches(isAdminRole && hasAllBranches);
+    
     setFormData({
       userCode: user.code || '',
       username: user.username,
@@ -276,19 +323,32 @@ export default function UserMasterForm() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDelete = (userId) => {
+  const handleDelete = async (userId) => {
     const user = users.find(u => u.id === userId);
     if (!user) return;
     
     if (window.confirm(`Are you sure you want to delete user "${user.username}"?\n\nThis action cannot be undone!`)) {
-      const updatedUsers = users.filter(u => u.id !== userId);
-      localStorage.setItem('users', JSON.stringify(updatedUsers));
-      loadUsers();
-      alert(`User "${user.username}" has been deleted successfully.`);
+      try {
+        // Delete from server
+        await apiService.deleteUser(userId);
+        
+        // Update local state immediately
+        const updatedUsers = users.filter(u => u.id !== userId);
+        setUsers(updatedUsers);
+        localStorage.setItem('users', JSON.stringify(updatedUsers));
+        
+        alert(`✅ User "${user.username}" has been deleted successfully.`);
+        
+        // Reload from server to ensure sync
+        await loadUsers();
+      } catch (error) {
+        console.error('Error deleting user:', error);
+        alert(`❌ Error deleting user: ${error.message}`);
+      }
     }
   };
 
-  const handleSuspend = (userId) => {
+  const handleSuspend = async (userId) => {
     const user = users.find(u => u.id === userId);
     if (!user) return;
     
@@ -296,12 +356,26 @@ export default function UserMasterForm() {
     const action = newStatus === 'Suspended' ? 'suspend' : 'activate';
     
     if (window.confirm(`Are you sure you want to ${action} user "${user.username}"?`)) {
-      const updatedUsers = users.map(u => 
-        u.id === userId ? { ...u, status: newStatus } : u
-      );
-      localStorage.setItem('users', JSON.stringify(updatedUsers));
-      loadUsers();
-      alert(`User "${user.username}" has been ${action}d successfully.`);
+      try {
+        // Update on server
+        const updatedUser = { ...user, status: newStatus };
+        await apiService.updateUser(userId, updatedUser);
+        
+        // Update local state immediately
+        const updatedUsers = users.map(u => 
+          u.id === userId ? { ...u, status: newStatus } : u
+        );
+        setUsers(updatedUsers);
+        localStorage.setItem('users', JSON.stringify(updatedUsers));
+        
+        alert(`✅ User "${user.username}" has been ${action}d successfully.`);
+        
+        // Reload from server to ensure sync
+        await loadUsers();
+      } catch (error) {
+        console.error('Error updating user status:', error);
+        alert(`❌ Error ${action}ing user: ${error.message}`);
+      }
     }
   };
 
@@ -326,53 +400,60 @@ export default function UserMasterForm() {
         }
       }
       
-      const updatedUsers = existingUsers.map(u => {
-        if (u.id === editingUserId) {
-          const updatedUser = {
-            ...u,
-            code: formData.userCode || u.code,
-            username: formData.username,
-            userRole: formData.userRole,
-            linkedStaff: formData.linkedStaff,
-            branch: formData.branch,
-            accessPermissions: formData.accessPermissions,
-            email: formData.email,
-            mobile: formData.mobile,
-            status: formData.status,
-            remarks: formData.remarks,
-            updatedAt: new Date().toISOString()
-          };
-          
-          // Only update password if provided
-          if (formData.password && formData.password.length > 0) {
-            updatedUser.password = formData.password;
-          }
-          
-          // Save to server
-          (async () => {
-            try {
-              const syncService = (await import('./utils/sync-service')).default;
-              const result = await syncService.save('users', updatedUser, true, editingUserId);
-              if (result.synced) {
-                console.log('✅ User updated on server');
-              } else {
-                console.warn('⚠️ User updated locally only (server unavailable)');
-              }
-            } catch (error) {
-              console.error('Error updating user on server:', error);
-            }
-          })();
-          
-          return updatedUser;
-        }
-        return u;
-      });
+      // For Super Admin/Admin with "Assign All Branches", store 'all', otherwise store branch ID
+      const branchValue = (formData.userRole === 'Super Admin' || formData.userRole === 'Admin') && assignAllBranches
+        ? 'all'
+        : (formData.branch || '');
       
+      // Find the user to update
+      const userToUpdate = existingUsers.find(u => u.id === editingUserId);
+      if (!userToUpdate) {
+        alert('❌ User not found!');
+        return;
+      }
+
+      // Prepare updated user data
+      const updatedUser = {
+        ...userToUpdate,
+        code: formData.userCode || userToUpdate.code,
+        username: formData.username,
+        userRole: formData.userRole,
+        linkedStaff: formData.linkedStaff,
+        branch: branchValue,
+        accessPermissions: formData.accessPermissions,
+        email: formData.email,
+        mobile: formData.mobile,
+        status: formData.status,
+        remarks: formData.remarks,
+        updatedAt: new Date().toISOString()
+      };
+      
+      // Only update password if provided
+      if (formData.password && formData.password.length > 0) {
+        updatedUser.password = formData.password;
+      }
+      
+      // Update on server
+      try {
+        await apiService.updateUser(editingUserId, updatedUser);
+        console.log('✅ User updated on server');
+      } catch (error) {
+        console.error('Error updating user on server:', error);
+      }
+      
+      // Update local state
+      const updatedUsers = existingUsers.map(u => 
+        u.id === editingUserId ? updatedUser : u
+      );
+      setUsers(updatedUsers);
       localStorage.setItem('users', JSON.stringify(updatedUsers));
-      loadUsers();
+      
       resetForm();
-      alert(`User "${formData.username}" has been updated successfully!`);
+      alert(`✅ User "${formData.username}" has been updated successfully!`);
       setActiveTab('view');
+      
+      // Reload from server to get latest data
+      await loadUsers();
     } else {
       // Create new user
       // Validate password match
@@ -393,48 +474,101 @@ export default function UserMasterForm() {
         return;
       }
       
-      const newUser = {
-        id: Date.now(),
+      // Prepare user data for API (don't include id, let server generate it)
+      // accessPermissions will be stringified by server if it's an object
+      // Don't include lastLogin - it's not in the database schema
+      // For Super Admin/Admin with "Assign All Branches", store 'all', otherwise store branch ID
+      const branchValue = (formData.userRole === 'Super Admin' || formData.userRole === 'Admin') && assignAllBranches
+        ? 'all'
+        : (formData.branch || '');
+      
+      const userDataForAPI = {
         code: formData.userCode || `USR${String(existingUsers.length + 1).padStart(3, '0')}`,
         username: formData.username,
         password: formData.password, // In production, this should be hashed
         userRole: formData.userRole,
-        linkedStaff: formData.linkedStaff,
-        branch: formData.branch,
-        accessPermissions: formData.accessPermissions,
-        email: formData.email,
-        mobile: formData.mobile,
-        lastLogin: '',
-        status: formData.status,
-        remarks: formData.remarks,
-        createdAt: new Date().toISOString()
+        linkedStaff: formData.linkedStaff || '',
+        branch: branchValue,
+        accessPermissions: formData.accessPermissions, // Server will stringify this
+        email: formData.email || '',
+        mobile: formData.mobile || '',
+        status: formData.status || 'Active',
+        remarks: formData.remarks || ''
+        // Note: lastLogin is not included - it's not in the database schema
       };
       
-      existingUsers.push(newUser);
-      localStorage.setItem('users', JSON.stringify(existingUsers));
-      
-      // Save to server
+      // Save to server first
+      let createdUser = null;
       try {
-        const syncService = (await import('./utils/sync-service')).default;
-        const result = await syncService.save('users', newUser);
-        if (result.synced) {
-          console.log('✅ User saved to server');
+        createdUser = await apiService.createUser(userDataForAPI);
+        console.log('✅ User saved to server:', createdUser);
+        
+        // Use the user returned from server (with proper ID and all fields)
+        if (createdUser && createdUser.id) {
+          // Parse accessPermissions if it's a string
+          if (typeof createdUser.accessPermissions === 'string') {
+            try {
+              createdUser.accessPermissions = JSON.parse(createdUser.accessPermissions);
+            } catch (e) {
+              createdUser.accessPermissions = formData.accessPermissions;
+            }
+          }
+          
+          // Update local state immediately with server response
+          setUsers(prev => [...prev, createdUser]);
+          existingUsers.push(createdUser);
+          localStorage.setItem('users', JSON.stringify(existingUsers));
         } else {
-          console.warn('⚠️ User saved locally only (server unavailable)');
+          // If server didn't return user, create local version
+          const newUser = {
+            ...userDataForAPI,
+            id: Date.now(),
+            accessPermissions: formData.accessPermissions,
+            lastLogin: '',
+            createdAt: new Date().toISOString()
+          };
+          setUsers(prev => [...prev, newUser]);
+          existingUsers.push(newUser);
+          localStorage.setItem('users', JSON.stringify(existingUsers));
         }
       } catch (error) {
         console.error('Error saving user to server:', error);
+        alert(`⚠️ Error saving user to server: ${error.message}\n\nUser saved locally only. Please check server connection.`);
+        // Still save locally if server fails
+        const newUser = {
+          ...userDataForAPI,
+          id: Date.now(),
+          accessPermissions: formData.accessPermissions,
+          lastLogin: '',
+          createdAt: new Date().toISOString()
+        };
+        setUsers(prev => [...prev, newUser]);
+        existingUsers.push(newUser);
+        localStorage.setItem('users', JSON.stringify(existingUsers));
       }
       
-      const selectedBranch = branches.find(b => b.id.toString() === formData.branch);
-      const branchInfo = selectedBranch ? `\nBranch: ${selectedBranch.branchName}` : '';
+      // Get branch info for success message
+      let branchInfo = '';
+      if (assignAllBranches && (formData.userRole === 'Super Admin' || formData.userRole === 'Admin')) {
+        branchInfo = '\nBranch: All Branches';
+      } else {
+        const selectedBranch = branches.find(b => 
+          b.id?.toString() === formData.branch?.toString() || 
+          b.id === formData.branch
+        );
+        branchInfo = selectedBranch ? `\nBranch: ${selectedBranch.branchName || 'Unnamed Branch'}` : '';
+      }
       
       const permissionCount = Object.values(formData.accessPermissions).filter(p => p).length;
+      const userCode = formData.userCode || `USR${String(existingUsers.length + 1).padStart(3, '0')}`;
       
-      alert(`User "${formData.username}" created successfully!\n\nUser Code: ${newUser.code}\nRole: ${formData.userRole}${branchInfo}\nPermissions: ${permissionCount}/${permissionGroups.length} modules\n\n⚠️ Note: Please save the login credentials securely!`);
+      alert(`✅ User "${formData.username}" created successfully!\n\nUser Code: ${userCode}\nRole: ${formData.userRole}${branchInfo}\nPermissions: ${permissionCount}/${permissionGroups.length} modules\n\n⚠️ Note: Please save the login credentials securely!`);
+      
       resetForm();
       setActiveTab('view');
-      loadUsers();
+      
+      // Reload from server to get latest data (in case server added fields)
+      await loadUsers();
     }
   };
 
@@ -790,7 +924,10 @@ export default function UserMasterForm() {
                         return matchesSearch && matchesStatus;
                       })
                       .map(user => {
-                        const userBranch = branches.find(b => b.id.toString() === user.branch);
+                        // Handle 'all' branch assignment for Super Admin/Admin
+                        const userBranch = (user.branch === 'all' || user.branch === 'ALL') 
+                          ? { branchName: 'All Branches', id: 'all' }
+                          : branches.find(b => b.id.toString() === user.branch);
                         
                         return (
                           <tr key={user.id} style={{
@@ -1059,7 +1196,11 @@ export default function UserMasterForm() {
             <div className="grid-2">
               <div className="input-group">
                 <label>Link to Staff</label>
-                {staff.length === 0 ? (
+                {loading ? (
+                  <select disabled style={{ background: '#f8fafc' }}>
+                    <option>Loading staff...</option>
+                  </select>
+                ) : staff.length === 0 ? (
                   <div style={{
                     padding: '10px',
                     background: '#fef3c7',
@@ -1078,7 +1219,7 @@ export default function UserMasterForm() {
                     <option value="">-- Not Linked to Staff --</option>
                     {staff.map(s => (
                       <option key={s.id} value={s.id}>
-                        {s.staffName} - {s.designation} ({s.code})
+                        {s.staffName || s.code} {s.designation ? `- ${s.designation}` : ''} {s.code ? `(${s.code})` : ''}
                       </option>
                     ))}
                   </select>
@@ -1086,8 +1227,55 @@ export default function UserMasterForm() {
               </div>
               
               <div className="input-group">
-                <label>Assigned Branch *</label>
-                {branches.length === 0 ? (
+                <label>Branch Assignment *</label>
+                {(formData.userRole === 'Super Admin' || formData.userRole === 'Admin') ? (
+                  <div style={{
+                    padding: '12px',
+                    background: '#f0f9ff',
+                    borderRadius: '8px',
+                    border: '2px solid #0ea5e9'
+                  }}>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      cursor: 'pointer',
+                      fontSize: '0.95rem',
+                      fontWeight: 500
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={assignAllBranches}
+                        onChange={(e) => {
+                          setAssignAllBranches(e.target.checked);
+                          setFormData(prev => ({ ...prev, branch: e.target.checked ? 'all' : '' }));
+                        }}
+                        style={{
+                          width: '20px',
+                          height: '20px',
+                          cursor: 'pointer'
+                        }}
+                      />
+                      <span>Assign All Branches</span>
+                    </label>
+                    {assignAllBranches && (
+                      <div style={{
+                        marginTop: '8px',
+                        padding: '8px',
+                        background: '#dbeafe',
+                        borderRadius: '6px',
+                        fontSize: '0.85rem',
+                        color: '#1e40af'
+                      }}>
+                        ✅ User will have access to all branches
+                      </div>
+                    )}
+                  </div>
+                ) : loading ? (
+                  <select disabled style={{ background: '#f8fafc' }}>
+                    <option>Loading branches...</option>
+                  </select>
+                ) : branches.length === 0 ? (
                   <div style={{
                     padding: '10px',
                     background: '#fef3c7',
@@ -1107,11 +1295,21 @@ export default function UserMasterForm() {
                     <option value="">-- Select Branch --</option>
                     {branches.map(branch => (
                       <option key={branch.id} value={branch.id}>
-                        {branch.branchName} - {branch.address.city}
+                        {branch.branchName || 'Unnamed Branch'} {branch.address?.city ? `- ${branch.address.city}` : branch.branchCode ? `(${branch.branchCode})` : ''}
                       </option>
                     ))}
                   </select>
                 )}
+                <div style={{
+                  marginTop: '8px',
+                  padding: '8px',
+                  background: '#f0fdf4',
+                  borderRadius: '6px',
+                  fontSize: '0.85rem',
+                  color: '#166534'
+                }}>
+                  ℹ️ User will only access data related to the selected branch
+                </div>
               </div>
             </div>
           </div>

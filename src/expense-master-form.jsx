@@ -20,119 +20,37 @@ export default function ExpenseMasterForm() {
   });
 
   useEffect(() => {
-    initializeDefaultExpenseTypes();
     loadData();
   }, []);
 
-  const initializeDefaultExpenseTypes = () => {
-    const storedMaster = JSON.parse(localStorage.getItem('expenseMaster') || '[]');
-    
-    // Only initialize if no expense types exist
-    if (storedMaster.length > 0) return;
-    
-    const allAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
-    
-    // Default expense types with their categories
-    const defaultExpenseTypes = [
-      // Operating Expenses
-      { category: 'Operating', expenseType: 'Diesel & Fuel', subGroup: 'Diesel & Fuel' },
-      { category: 'Operating', expenseType: 'Vehicle Maintenance', subGroup: 'Vehicle Maintenance' },
-      { category: 'Operating', expenseType: 'Office Expenses', subGroup: 'Office Expenses' },
-      { category: 'Operating', expenseType: 'Rent', subGroup: 'Rent' },
-      { category: 'Operating', expenseType: 'Loading/Unloading', subGroup: 'Office Expenses' },
-      { category: 'Operating', expenseType: 'Toll Charges', subGroup: 'Office Expenses' },
-      { category: 'Operating', expenseType: 'Driver Salary', subGroup: 'Salary & Wages' },
-      
-      // Administrative Expenses
-      { category: 'Administrative', expenseType: 'Salary & Wages', subGroup: 'Salary & Wages' },
-      { category: 'Administrative', expenseType: 'Professional Fees', subGroup: 'Professional Fees' },
-      { category: 'Administrative', expenseType: 'Telephone', subGroup: 'Telephone' },
-      { category: 'Administrative', expenseType: 'Printing & Stationery', subGroup: 'Printing & Stationery' },
-      { category: 'Administrative', expenseType: 'Internet', subGroup: 'Telephone' },
-      { category: 'Administrative', expenseType: 'Electricity', subGroup: 'Office Expenses' },
-      { category: 'Administrative', expenseType: 'Water', subGroup: 'Office Expenses' },
-      
-      // Financial Expenses
-      { category: 'Financial', expenseType: 'Interest', subGroup: 'Interest' },
-      { category: 'Financial', expenseType: 'Bank Charges', subGroup: 'Bank Charges' },
-      { category: 'Financial', expenseType: 'Penalties', subGroup: 'Penalties' },
-      { category: 'Financial', expenseType: 'Late Fees', subGroup: 'Penalties' },
-      
-      // Other Expenses
-      { category: 'Other', expenseType: 'Miscellaneous', subGroup: 'Miscellaneous' },
-      { category: 'Other', expenseType: 'Donations', subGroup: 'Miscellaneous' },
-      { category: 'Other', expenseType: 'Entertainment', subGroup: 'Miscellaneous' },
-      { category: 'Other', expenseType: 'Travel', subGroup: 'Miscellaneous' }
-    ];
-    
-    const newExpenseTypes = [];
-    
-    defaultExpenseTypes.forEach((expense, index) => {
-      // Try to find matching expense account
-      let expenseAccount = allAccounts.find(acc => 
-        acc.category === 'Expenses' &&
-        (acc.subGroup === expense.subGroup || 
-         acc.accountName.toLowerCase().includes(expense.expenseType.toLowerCase()) ||
-         acc.group === `${expense.category} Expenses`)
-      );
-      
-      // If no matching account found, create one
-      if (!expenseAccount) {
-        const accountCode = `EXP-${expense.expenseType.replace(/\s+/g, '-').toUpperCase().substring(0, 10)}`;
-        expenseAccount = {
-          id: Date.now() + index * 1000,
-          accountName: expense.expenseType,
-          accountCode: accountCode,
-          category: 'Expenses',
-          group: expense.category === 'Operating' ? 'Operating Expenses' :
-                 expense.category === 'Administrative' ? 'Administrative Expenses' :
-                 expense.category === 'Financial' ? 'Financial Expenses' : 'Other Expenses',
-          subGroup: expense.subGroup,
-          openingBalance: '0',
-          currentBalance: '0',
-          balanceType: 'Debit',
-          status: 'Active',
-          createdAt: new Date().toISOString()
-        };
-        allAccounts.push(expenseAccount);
-      }
-      
-      // Special description for Driver Salary
-      let description = `Default expense type for ${expense.expenseType}`;
-      if (expense.expenseType === 'Driver Salary') {
-        description = 'Driver Salary and Bhatta (Allowance) - All driver salary and bhatta payments should be debited through this expense head';
-      }
-      
-      newExpenseTypes.push({
-        id: Date.now() + index,
-        category: expense.category,
-        expenseType: expense.expenseType,
-        expenseHead: expenseAccount.id,
-        description: description,
-        status: 'Active',
-        createdAt: new Date().toISOString()
-      });
-    });
-    
-    // Save accounts if new ones were created
-    if (allAccounts.length > JSON.parse(localStorage.getItem('accountMaster') || '[]').length) {
-      localStorage.setItem('accountMaster', JSON.stringify(allAccounts));
-    }
-    
-    // Save expense master
-    localStorage.setItem('expenseMaster', JSON.stringify(newExpenseTypes));
-  };
+  const loadData = async () => {
+    try {
+      const [types, allAccounts] = await Promise.all([
+        expenseMasterService.getAll(),
+        accountsService.getAll(),
+      ]);
 
-  const loadData = () => {
-    const storedMaster = JSON.parse(localStorage.getItem('expenseMaster') || '[]');
-    setExpenseMaster(storedMaster);
-    
-    const allAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
-    // Filter only expense accounts (category = 'Expenses')
-    const expenseAccounts = allAccounts.filter(acc => 
-      acc.category === 'Expenses' && acc.status === 'Active'
-    );
-    setAccounts(expenseAccounts);
+      setExpenseMaster(Array.isArray(types) ? types : []);
+
+      const accountsArray = Array.isArray(allAccounts) ? allAccounts : [];
+      // Support both old + new account schemas
+      const expenseAccounts = accountsArray.filter(acc => {
+        const statusOk = !acc.status || acc.status === 'Active';
+        const type = String(acc.accountType || acc.category || '').toLowerCase();
+        const isExpense = type.includes('expense');
+        // If no type is present, still allow selecting (better than empty dropdown)
+        return statusOk && (isExpense || !type);
+      });
+      setAccounts(expenseAccounts);
+    } catch (err) {
+      console.error('Error loading Expense Master:', err);
+      // Fallback (legacy) - keep UI usable if server is down
+      const storedMaster = JSON.parse(localStorage.getItem('expenseMaster') || '[]');
+      setExpenseMaster(storedMaster);
+      const allAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
+      const expenseAccounts = allAccounts.filter(acc => acc.status === 'Active');
+      setAccounts(expenseAccounts);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -145,28 +63,38 @@ export default function ExpenseMasterForm() {
     const duplicate = existingMaster.find(
       item =>
         item.category === formData.category &&
-        item.expenseType.toLowerCase() === formData.expenseType.toLowerCase() &&
+        String(item.expenseType || '').toLowerCase() === String(formData.expenseType || '').toLowerCase() &&
         item.id !== editingId
     );
     if (duplicate) {
       alert('⚠️ This expense type already exists in the selected category!');
       return;
     }
+
+    const payload = {
+      category: formData.category,
+      expenseType: formData.expenseType,
+      description: formData.description || '',
+      accountId: formData.expenseHead,
+      status: formData.status || 'Active',
+      updatedAt: new Date().toISOString(),
+    };
+
     if (editingId) {
       // Update existing
-      await expenseMasterService.update(editingId, { ...formData });
+      await expenseMasterService.update(editingId, payload);
       setEditingId(null);
       alert('✅ Expense type updated successfully!');
     } else {
       // Create new
-      const newItem = {
-        ...formData,
-        createdAt: new Date().toISOString()
-      };
-      await expenseMasterService.create(newItem);
+      await expenseMasterService.create({
+        ...payload,
+        createdAt: new Date().toISOString(),
+      });
       alert('✅ Expense type added successfully!');
     }
     await loadData();
+    window.dispatchEvent(new CustomEvent('expenseTypesUpdated'));
     setFormData({
       category: '',
       expenseType: '',
@@ -179,7 +107,13 @@ export default function ExpenseMasterForm() {
   };
 
   const editItem = (item) => {
-    setFormData(item);
+    setFormData({
+      category: item.category || '',
+      expenseType: item.expenseType || '',
+      expenseHead: item.accountId || item.expenseHead || '',
+      description: item.description || '',
+      status: item.status || 'Active'
+    });
     setEditingId(item.id);
     setSelectedCategory(item.category);
     setShowForm(true);
@@ -203,9 +137,9 @@ export default function ExpenseMasterForm() {
   
   const filteredMaster = expenseMaster.filter(item => {
     const matchesSearch = searchTerm === '' || 
-      item.expenseType.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      getExpenseHeadName(item.expenseHead).toLowerCase().includes(searchTerm.toLowerCase());
+      String(item.expenseType || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      String(item.category || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      getExpenseHeadName(item.accountId || item.expenseHead).toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesCategory = filterCategory === 'All' || item.category === filterCategory;
     
@@ -517,7 +451,14 @@ export default function ExpenseMasterForm() {
               <option value="">-- Select Expense Head from Account Master --</option>
               {accounts.map(acc => (
                 <option key={acc.id} value={acc.id}>
-                  {acc.accountName} ({acc.accountCode}) - {acc.group} {acc.subGroup ? `- ${acc.subGroup}` : ''}
+                  {(() => {
+                    const data = typeof acc.data === 'string' ? (() => { try { return JSON.parse(acc.data); } catch { return {}; } })() : (acc.data || {});
+                    const group = acc.parentAccount || acc.group || data.group || '';
+                    const subGroup = acc.subGroup || data.subGroup || '';
+                    const type = acc.accountType || acc.category || data.category || '';
+                    const tail = [type, group, subGroup].filter(Boolean).join(' - ');
+                    return `${acc.accountName} (${acc.accountCode})${tail ? ` - ${tail}` : ''}`;
+                  })()}
                 </option>
               ))}
             </select>
@@ -680,7 +621,7 @@ export default function ExpenseMasterForm() {
                                 {item.expenseType}
                               </td>
                               <td style={{ padding: '14px 16px', color: '#475569', fontSize: '0.9rem' }}>
-                                {getExpenseHeadName(item.expenseHead)}
+                                {getExpenseHeadName(item.accountId || item.expenseHead)}
                               </td>
                               <td style={{ padding: '14px 16px', color: '#64748b', fontSize: '0.875rem' }}>
                                 {item.description || <span style={{ fontStyle: 'italic', color: '#94a3b8' }}>No description</span>}

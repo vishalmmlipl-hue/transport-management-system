@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Trash2, Wallet, DollarSign, Edit2, X } from 'lucide-react';
+import syncService from './utils/sync-service';
 
 export default function BranchAccountForm() {
   const [branches, setBranches] = useState([]);
@@ -25,18 +26,44 @@ export default function BranchAccountForm() {
   });
 
   useEffect(() => {
-    const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    setBranches(allBranches.filter(b => b.status === 'Active'));
-    
-    loadAccounts();
+    const loadInitial = async () => {
+      try {
+        const [branchesRes, branchAccRes] = await Promise.all([
+          syncService.load('branches'),
+          syncService.load('branchAccounts'),
+        ]);
+        const allBranches = Array.isArray(branchesRes) ? branchesRes : (branchesRes?.data || []);
+        const allBranchAccounts = Array.isArray(branchAccRes) ? branchAccRes : (branchAccRes?.data || []);
+        const activeBranches = (allBranches || []).filter(b => !b.status || b.status === 'Active');
+        const activeAccounts = (allBranchAccounts || []).filter(a => !a.status || a.status === 'Active');
+        setBranches(activeBranches);
+        setAccounts(activeAccounts);
+        localStorage.setItem('branches', JSON.stringify(activeBranches));
+        localStorage.setItem('branchAccounts', JSON.stringify(activeAccounts));
+      } catch (e) {
+        const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+        setBranches(allBranches.filter(b => b.status === 'Active'));
+        const allAccounts = JSON.parse(localStorage.getItem('branchAccounts') || '[]');
+        setAccounts(allAccounts);
+      }
+    };
+    loadInitial();
   }, []);
 
-  const loadAccounts = () => {
-    const allAccounts = JSON.parse(localStorage.getItem('branchAccounts') || '[]');
-    setAccounts(allAccounts);
+  const reloadBranchAccounts = async () => {
+    try {
+      const res = await syncService.load('branchAccounts');
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      const active = (list || []).filter(a => !a.status || a.status === 'Active');
+      setAccounts(active);
+      localStorage.setItem('branchAccounts', JSON.stringify(active));
+    } catch (e) {
+      const allAccounts = JSON.parse(localStorage.getItem('branchAccounts') || '[]');
+      setAccounts(allAccounts);
+    }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!formData.accountName || !formData.accountNumber) {
@@ -62,107 +89,89 @@ export default function BranchAccountForm() {
       ? 'HO' 
       : branches.find(b => b.id.toString() === formData.branch.toString())?.branchCode || '';
 
+    const accountCode = formData.accountType === 'Bank Account'
+      ? `BANK-${branchCode}-${String(formData.accountNumber || '').slice(-4) || 'XXXX'}`
+      : `CASH-${branchCode}-${String(formData.accountNumber || 'CASH').slice(-4) || 'CASH'}`;
+    const ledgerName = formData.accountType === 'Bank Account'
+      ? `${branchName} - ${formData.bankName || 'Bank'} - ${String(formData.accountNumber || '').slice(-4) || ''}`
+      : `${branchName} - Cashier Account`;
+
+    // Ensure there is an Account Master ledger in server accounts
+    let linkedAccountId = editingAccount?.accountId || '';
+    try {
+      const accRes = await syncService.load('accounts');
+      const accList = Array.isArray(accRes) ? accRes : (accRes?.data || []);
+      const existing = (accList || []).find(a => String(a.accountCode || '').toUpperCase() === String(accountCode).toUpperCase());
+      if (existing?.id) {
+        linkedAccountId = String(existing.id);
+      } else {
+        const payload = {
+          accountCode,
+          accountName: ledgerName,
+          accountType: 'Assets',
+          parentAccount: 'Current Assets',
+          balance: String(formData.currentBalance || formData.openingBalance || '0'),
+          status: formData.status || 'Active',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          data: JSON.stringify({
+            category: 'Assets',
+            group: 'Current Assets',
+            subGroup: formData.accountType === 'Bank Account' ? 'Bank Accounts' : 'Cash in Hand',
+            openingBalance: formData.openingBalance || '0',
+            balanceType: 'Debit',
+            linkedEntityType: 'Branch Account',
+            linkedBranch: formData.branch,
+            branchName,
+            branchCode,
+          })
+        };
+        const created = await syncService.save('accounts', payload);
+        if (created?.data?.id) linkedAccountId = String(created.data.id);
+      }
+    } catch (err) {
+      console.warn('Account Master ledger create failed:', err);
+    }
+
+    const branchAccountPayload = {
+      accountType: formData.accountType,
+      branch: formData.branch,
+      accountName: formData.accountName,
+      accountNumber: formData.accountNumber || '',
+      bankName: formData.bankName || '',
+      ifscCode: formData.ifscCode || '',
+      openingBalance: String(formData.openingBalance || '0'),
+      currentBalance: String(formData.currentBalance || formData.openingBalance || '0'),
+      accountId: linkedAccountId || '',
+      status: formData.status || 'Active',
+      updatedAt: new Date().toISOString(),
+      data: {
+        branchName,
+        branchCode,
+        branchAddress: formData.branchAddress || '',
+        accountHolderName: formData.accountHolderName || '',
+        contactPerson: formData.contactPerson || '',
+        contactNumber: formData.contactNumber || '',
+        email: formData.email || '',
+        remarks: formData.remarks || ''
+      }
+    };
+
     if (editingAccount) {
-      // Update existing account
-      const updatedAccounts = accounts.map(acc => 
-        acc.id === editingAccount.id 
-          ? {
-              ...acc,
-              ...formData,
-              branchName: branchName,
-              branchCode: branchCode,
-              updatedAt: new Date().toISOString()
-            }
-          : acc
-      );
-      localStorage.setItem('branchAccounts', JSON.stringify(updatedAccounts));
-      setAccounts(updatedAccounts);
-      alert(`✅ Account updated successfully!`);
+      const res = await syncService.save('branchAccounts', branchAccountPayload, true, editingAccount.id);
+      if (res && res.success === false) throw new Error(res.error || 'Update failed');
+      alert('✅ Account updated successfully!');
     } else {
-      // Create new account
-      const branchAccountId = Date.now();
-      
-      // Create account master entry with branch account ID
-      const accountMasterId = updateAccountMaster(formData, branchName, branchCode, null, branchAccountId);
-      
-      const newAccount = {
-        id: branchAccountId,
-        ...formData,
-        branchName: branchName,
-        branchCode: branchCode,
-        accountMasterId: accountMasterId,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      
-      const updatedAccounts = [...accounts, newAccount];
-      localStorage.setItem('branchAccounts', JSON.stringify(updatedAccounts));
-      setAccounts(updatedAccounts);
+      const res = await syncService.save('branchAccounts', branchAccountPayload);
+      if (res && res.success === false) throw new Error(res.error || 'Create failed');
       alert(`✅ ${formData.accountType} created successfully!\n\nAccount: ${formData.accountName}\nBranch: ${branchName}`);
     }
 
-    // For editing, update account master
-    if (editingAccount) {
-      updateAccountMaster(formData, branchName, branchCode, editingAccount, editingAccount.id);
-    }
+    await reloadBranchAccounts();
+    window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
 
     // Reset form
     resetForm();
-  };
-
-  const updateAccountMaster = (accountData, branchName, branchCode, editingAccount, branchAccountId) => {
-    const allAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
-    
-    const accountCode = accountData.accountType === 'Bank Account'
-      ? `BANK-${branchCode}-${accountData.accountNumber.slice(-4)}`
-      : `CASH-${branchCode}-${accountData.accountNumber || 'CASH'}`;
-    
-    const accountName = accountData.accountType === 'Bank Account'
-      ? `${branchName} - ${accountData.bankName} - ${accountData.accountNumber.slice(-4)}`
-      : `${branchName} - Cashier Account`;
-    
-    if (editingAccount && editingAccount.accountMasterId) {
-      // Update existing account master entry
-      const updatedAccounts = allAccounts.map(acc => 
-        acc.id.toString() === editingAccount.accountMasterId.toString()
-          ? {
-              ...acc,
-              accountName: accountName,
-              accountCode: accountCode,
-              openingBalance: accountData.openingBalance,
-              currentBalance: accountData.currentBalance,
-              lastUpdated: new Date().toISOString()
-            }
-          : acc
-      );
-      localStorage.setItem('accountMaster', JSON.stringify(updatedAccounts));
-      return editingAccount.accountMasterId;
-    } else {
-      // Create new account master entry
-      const accountMasterId = Date.now();
-      const accountMasterEntry = {
-        id: accountMasterId,
-        accountName: accountName,
-        accountCode: accountCode,
-        category: 'Assets',
-        group: 'Current Assets',
-        subGroup: accountData.accountType === 'Bank Account' ? 'Bank Accounts' : 'Cash in Hand',
-        openingBalance: accountData.openingBalance || '0',
-        currentBalance: accountData.currentBalance || accountData.openingBalance || '0',
-        balanceType: 'Debit',
-        linkedEntity: accountData.branch === 'HO' ? 'HO' : accountData.branch.toString(),
-        linkedEntityType: accountData.branch === 'HO' ? 'Head Office' : 'Branch',
-        linkedAccountId: branchAccountId || (editingAccount ? editingAccount.id : Date.now()),
-        status: accountData.status,
-        description: `${accountData.accountType} for ${branchName}`,
-        createdAt: new Date().toISOString()
-      };
-      
-      const updatedAccounts = [...allAccounts, accountMasterEntry];
-      localStorage.setItem('accountMaster', JSON.stringify(updatedAccounts));
-      
-      return accountMasterId;
-    }
   };
 
   const handleEdit = (account) => {

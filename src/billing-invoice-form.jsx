@@ -625,6 +625,17 @@ export default function BillingForm() {
           {formData.selectedLRs.length > 0 && (
             <div className="form-section" style={{ display: 'none', '@media print': { display: 'block' } }}>
               <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+                  <img
+                    src="/brand-logo.png"
+                    alt="Company Logo"
+                    style={{ height: '56px', width: 'auto', objectFit: 'contain' }}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src = '/logo192.png';
+                    }}
+                  />
+                </div>
                 <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '8px' }}>TAX INVOICE</h1>
                 <div className="mono" style={{ fontSize: '1.2rem' }}>{formData.invoiceNumber}</div>
                 <div style={{ marginTop: '8px' }}>Date: {formData.invoiceDate}</div>
@@ -647,6 +658,7 @@ export default function BillingForm() {
                   <tr>
                     <th>S.No</th>
                     <th>LR Number</th>
+                    <th>Ref No</th>
                     <th>Date</th>
                     <th>From</th>
                     <th>To</th>
@@ -658,6 +670,7 @@ export default function BillingForm() {
                     <tr key={lr.id}>
                       <td>{index + 1}</td>
                       <td className="mono">{lr.lrNumber}</td>
+                      <td>{lr.referenceNumber || '-'}</td>
                       <td>{lr.bookingDate}</td>
                       <td>{lr.consignor.name}</td>
                       <td>{lr.consignee.name}</td>
@@ -665,27 +678,27 @@ export default function BillingForm() {
                     </tr>
                   ))}
                   <tr style={{ fontWeight: 600, background: '#f1f5f9' }}>
-                    <td colSpan="5" style={{ textAlign: 'right' }}>Subtotal:</td>
+                    <td colSpan="6" style={{ textAlign: 'right' }}>Subtotal:</td>
                     <td style={{ textAlign: 'right' }}>₹{formData.subtotal.toFixed(2)}</td>
                   </tr>
                   <tr>
-                    <td colSpan="5" style={{ textAlign: 'right' }}>GST ({formData.gstPercent}%):</td>
+                    <td colSpan="6" style={{ textAlign: 'right' }}>GST ({formData.gstPercent}%):</td>
                     <td style={{ textAlign: 'right' }}>₹{formData.gstAmount.toFixed(2)}</td>
                   </tr>
                   {formData.tdsAmount > 0 && (
                     <tr>
-                      <td colSpan="5" style={{ textAlign: 'right' }}>TDS ({formData.tdsPercent}%):</td>
+                      <td colSpan="6" style={{ textAlign: 'right' }}>TDS ({formData.tdsPercent}%):</td>
                       <td style={{ textAlign: 'right' }}>-₹{formData.tdsAmount.toFixed(2)}</td>
                     </tr>
                   )}
                   {formData.discount > 0 && (
-                    <tr>
-                      <td colSpan="5" style={{ textAlign: 'right' }}>Discount:</td>
-                      <td style={{ textAlign: 'right' }}>-₹{parseFloat(formData.discount).toFixed(2)}</td>
-                    </tr>
+                  <tr>
+                    <td colSpan="6" style={{ textAlign: 'right' }}>Discount:</td>
+                    <td style={{ textAlign: 'right' }}>-₹{parseFloat(formData.discount).toFixed(2)}</td>
+                  </tr>
                   )}
                   <tr style={{ fontWeight: 700, background: '#f1f5f9', fontSize: '1.1rem' }}>
-                    <td colSpan="5" style={{ textAlign: 'right' }}>TOTAL AMOUNT:</td>
+                    <td colSpan="6" style={{ textAlign: 'right' }}>TOTAL AMOUNT:</td>
                     <td style={{ textAlign: 'right' }}>₹{formData.totalAmount.toFixed(2)}</td>
                   </tr>
                 </tbody>

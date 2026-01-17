@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Shield, CreditCard, CheckCircle, AlertCircle, Loader, Search, Upload, X, Trash2 } from 'lucide-react';
+import { Save, Shield, CreditCard, CheckCircle, AlertCircle, Loader, Search, Upload, X, Trash2, User } from 'lucide-react';
 import { useDrivers } from './hooks/useDataSync';
+import { verifyDriverLicense, parseLicenseData } from './utils/driverLicenseService';
 
 export default function DriverMasterWithGovVerification() {
   const { data: drivers, loading, error, create, remove, setData } = useDrivers();
@@ -26,6 +27,7 @@ export default function DriverMasterWithGovVerification() {
 
   const [formData, setFormData] = useState({
     driverName: '',
+    nickName: '',
     fatherName: '',
     mobile: '',
     alternateMobile: '',
@@ -51,65 +53,80 @@ export default function DriverMasterWithGovVerification() {
     remarks: ''
   });
 
-  // VAHAN 4 License Verification
+  // Driver License Verification using Consent-based API
   const verifyLicenseVahan4 = async () => {
-    if (!formData.licenseNumber) {
-      alert('Please enter driving license number!');
+    if (!formData.licenseNumber || formData.licenseNumber.trim() === '') {
+      alert('Please enter driving license number to verify!');
+      return;
+    }
+
+    if (!formData.dateOfBirth || formData.dateOfBirth.trim() === '') {
+      alert('Please enter date of birth for verification!');
       return;
     }
 
     setLicenseVerifying(true);
 
     try {
-      // VAHAN 4 API Call
-      // Production endpoint: https://vahanapi.parivahan.gov.in/vahanseva/vahan4api
-      
-      const response = await fetch('/api/vahan4/verify-license', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Add your VAHAN API credentials here
-          'X-API-Key': process.env.REACT_APP_VAHAN_API_KEY || 'YOUR_VAHAN_API_KEY'
-        },
-        body: JSON.stringify({
-          dlNumber: formData.licenseNumber.toUpperCase(),
-          dob: formData.dateOfBirth
-        })
+      console.log('🔍 Starting license verification...', {
+        licenseNumber: formData.licenseNumber,
+        dob: formData.dateOfBirth
       });
 
-      if (!response.ok) {
-        throw new Error('VAHAN verification failed');
-      }
+      // Use consent-based API for license verification
+      const apiResponse = await verifyDriverLicense(
+        formData.licenseNumber,
+        formData.dateOfBirth,
+        formData.driverName || '',
+        formData.aadharNumber || '',
+        formData.mobile || '',
+        formData.emailId || ''
+      );
 
-      const data = await response.json();
+      console.log('📥 API Response received:', apiResponse);
 
-      if (data.status === 'SUCCESS') {
+      // Parse the response
+      const licenseInfo = parseLicenseData(apiResponse);
+
+      console.log('📋 Parsed license info:', licenseInfo);
+
+      if (licenseInfo && (licenseInfo.name || licenseInfo.licenseNumber)) {
         setLicenseVerified(true);
-        setLicenseData(data.result);
+        setLicenseData(licenseInfo);
         
-        // Auto-fill form with VAHAN data
+        // Auto-fill form with license data
         setFormData(prev => ({
           ...prev,
-          driverName: data.result.name || prev.driverName,
-          fatherName: data.result.fatherName || prev.fatherName,
-          dateOfBirth: data.result.dob || prev.dateOfBirth,
-          address: data.result.permanentAddress || prev.address,
-          licenseIssueDate: data.result.issueDate || prev.licenseIssueDate,
-          licenseExpiryDate: data.result.validTill || prev.licenseExpiryDate,
-          licenseType: data.result.covDetails?.[0]?.cov || prev.licenseType,
-          bloodGroup: data.result.bloodGroup || prev.bloodGroup,
-          state: data.result.state || prev.state
+          driverName: licenseInfo.name || prev.driverName,
+          fatherName: licenseInfo.fatherName || prev.fatherName,
+          dateOfBirth: licenseInfo.dateOfBirth || prev.dateOfBirth,
+          address: licenseInfo.address || prev.address,
+          city: licenseInfo.city || prev.city,
+          state: licenseInfo.state || prev.state,
+          pincode: licenseInfo.pincode || prev.pincode,
+          licenseIssueDate: licenseInfo.licenseIssueDate || prev.licenseIssueDate,
+          licenseExpiryDate: licenseInfo.licenseExpiryDate || prev.licenseExpiryDate,
+          licenseType: licenseInfo.licenseType || prev.licenseType,
+          bloodGroup: licenseInfo.bloodGroup || prev.bloodGroup
         }));
 
-        alert('✅ License verified successfully with VAHAN 4!\n\nDriver details auto-filled from government database.');
+        alert('✅ License verified successfully!\n\nDriver details auto-filled from government database.');
       } else {
-        throw new Error(data.message || 'License verification failed');
+        console.warn('⚠️ License info is empty or invalid:', licenseInfo);
+        throw new Error('Invalid license data received. Please check the license number and DOB.');
       }
     } catch (error) {
-      console.error('VAHAN verification error:', error);
+      console.error('❌ License verification error:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        response: error.response
+      });
       
-      // FALLBACK: Simulated VAHAN response for testing
-      // Remove this in production when you have real API access
+      // Show user-friendly error message
+      alert(`❌ License verification failed!\n\nError: ${error.message || 'Unknown error'}\n\nPlease check:\n- License number is correct\n- Date of birth is correct\n- Internet connection\n\nUsing fallback data for testing...`);
+      
+      // FALLBACK: Simulated verification for testing
       simulateVahanVerification();
     } finally {
       setLicenseVerifying(false);
@@ -163,8 +180,8 @@ export default function DriverMasterWithGovVerification() {
 
   // UIDAI Aadhar Verification - Step 1: Send OTP
   const sendAadharOtp = async () => {
-    if (!formData.aadharNumber) {
-      alert('Please enter Aadhar number!');
+    if (!formData.aadharNumber || formData.aadharNumber.trim() === '') {
+      alert('Please enter Aadhar number to verify!');
       return;
     }
 
@@ -379,23 +396,19 @@ export default function DriverMasterWithGovVerification() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!licenseVerified) {
-      alert('⚠️ Please verify driving license with VAHAN 4 first!');
+    // Basic validation - only driver name is required
+    if (!formData.driverName || formData.driverName.trim() === '') {
+      alert('⚠️ Driver Name is required!');
       return;
     }
 
-    if (!aadharVerified) {
-      alert('⚠️ Please verify Aadhar with UIDAI first!');
-      return;
-    }
+    // License and Aadhar verification are now optional
+    // User can add driver with basic details and verify later
     
     const newDriver = {
       ...formData,
-      licenseImage,
-      aadharImage,
-      licenseVerificationData: licenseData,
-      aadharVerificationData: aadharData,
-      verificationDate: new Date().toISOString(),
+      licenseImage: licenseImage || '',
+      aadharImage: aadharImage || '',
       createdAt: new Date().toISOString()
     };
 
@@ -414,6 +427,7 @@ export default function DriverMasterWithGovVerification() {
     // Reset form
     setFormData({
       driverName: '',
+      nickName: '',
       fatherName: '',
       mobile: '',
       alternateMobile: '',
@@ -439,17 +453,11 @@ export default function DriverMasterWithGovVerification() {
       remarks: ''
     });
 
-    setLicenseVerified(false);
-    setLicenseData(null);
-    setAadharVerified(false);
-    setAadharData(null);
-    setAadharOtpSent(false);
-    setAadharOtp('');
     setLicenseImage('');
     setAadharImage('');
 
     setTimeout(() => {
-      document.querySelector('input[name="licenseNumber"]')?.focus();
+      document.querySelector('input[name="driverName"]')?.focus();
     }, 100);
   };
 
@@ -709,9 +717,9 @@ export default function DriverMasterWithGovVerification() {
       <div className="max-w-7xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-slate-800 mb-2">
-            👤 Driver Master - Government Verified
+            👤 Driver Master
           </h1>
-          <p className="text-slate-600 text-lg">VAHAN 4 License + UIDAI Aadhar Verification with Auto-Fill</p>
+          <p className="text-slate-600 text-lg">Add and manage driver information</p>
         </div>
 
         {showSuccessMessage && (
@@ -724,437 +732,223 @@ export default function DriverMasterWithGovVerification() {
         )}
 
         <form onSubmit={handleSubmit}>
-          {/* VAHAN 4 License Verification */}
-          <div className="form-section verification-section">
+          {/* Driver Details Form */}
+          <div className="form-section">
             <h2 className="section-title">
-              <Shield size={20} />
-              Step 1: VAHAN 4 License Verification
+              <User size={20} />
+              Driver Information
             </h2>
-            
-            <div style={{ 
-              background: '#fee2e2',
-              padding: '12px 16px',
-              borderRadius: '8px',
-              marginBottom: '20px',
-              border: '2px solid #fecaca',
-              color: '#991b1b',
-              fontSize: '0.9rem'
-            }}>
-              <strong>🔐 Government Verification:</strong> This will verify the license with official VAHAN 4 database and auto-fill driver details.
-            </div>
-
+              
             <div className="grid-3">
               <div className="input-group">
-                <label>Driving License Number *</label>
+                <label>Driver Name *</label>
                 <input
                   type="text"
-                  name="licenseNumber"
-                  value={formData.licenseNumber}
-                  onChange={(e) => setFormData(prev => ({ ...prev, licenseNumber: e.target.value.toUpperCase() }))}
-                  placeholder="MH0120210012345"
+                  value={formData.driverName}
+                  onChange={(e) => setFormData(prev => ({ ...prev, driverName: e.target.value }))}
                   required
-                  autoFocus
-                  disabled={licenseVerified}
-                  className={licenseVerified ? 'auto-filled' : ''}
+                  placeholder="Enter driver full name"
                 />
               </div>
               
               <div className="input-group">
-                <label>Date of Birth (for verification) *</label>
+                <label>Nick Name</label>
+                <input
+                  type="text"
+                  value={formData.nickName}
+                  onChange={(e) => setFormData(prev => ({ ...prev, nickName: e.target.value }))}
+                  placeholder="Optional nickname"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>Father's Name</label>
+                <input
+                  type="text"
+                  value={formData.fatherName}
+                  onChange={(e) => setFormData(prev => ({ ...prev, fatherName: e.target.value }))}
+                  placeholder="Optional"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>Date of Birth</label>
                 <input
                   type="date"
                   value={formData.dateOfBirth}
                   onChange={(e) => setFormData(prev => ({ ...prev, dateOfBirth: e.target.value }))}
-                  required
-                  disabled={licenseVerified}
-                  className={licenseVerified ? 'auto-filled' : ''}
                 />
               </div>
               
               <div className="input-group">
-                <label>Verify License</label>
-                <button
-                  type="button"
-                  className="btn btn-verify"
-                  onClick={verifyLicenseVahan4}
-                  disabled={licenseVerifying || licenseVerified || !formData.licenseNumber || !formData.dateOfBirth}
-                  style={{ width: '100%' }}
+                <label>Gender</label>
+                <select
+                  value={formData.gender}
+                  onChange={(e) => setFormData(prev => ({ ...prev, gender: e.target.value }))}
                 >
-                  {licenseVerifying ? (
-                    <>
-                      <div className="spinner" />
-                      Verifying...
-                    </>
-                  ) : licenseVerified ? (
-                    <>
-                      <CheckCircle size={18} />
-                      Verified ✓
-                    </>
-                  ) : (
-                    <>
-                      <Shield size={18} />
-                      Verify with VAHAN 4
-                    </>
-                  )}
-                </button>
+                  <option value="">-- Select --</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              
+              <div className="input-group">
+                <label>Blood Group</label>
+                <select
+                  value={formData.bloodGroup}
+                  onChange={(e) => setFormData(prev => ({ ...prev, bloodGroup: e.target.value }))}
+                >
+                  <option value="">-- Select --</option>
+                  <option value="A+">A+</option>
+                  <option value="A-">A-</option>
+                  <option value="B+">B+</option>
+                  <option value="B-">B-</option>
+                  <option value="O+">O+</option>
+                  <option value="O-">O-</option>
+                  <option value="AB+">AB+</option>
+                  <option value="AB-">AB-</option>
+                </select>
               </div>
             </div>
-
-            {licenseVerified && licenseData && (
-              <div className="verification-card verification-success">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                  <CheckCircle size={24} color="#10b981" />
-                  <strong style={{ fontSize: '1.1rem', color: '#065f46' }}>
-                    ✅ License Verified with VAHAN 4
-                  </strong>
-                </div>
-                
-                <div className="grid-3" style={{ fontSize: '0.9rem' }}>
-                  <div>
-                    <strong>Name:</strong> {licenseData.name}
-                  </div>
-                  <div>
-                    <strong>Father's Name:</strong> {licenseData.fatherName}
-                  </div>
-                  <div>
-                    <strong>DOB:</strong> {licenseData.dob}
-                  </div>
-                  <div>
-                    <strong>Valid Till:</strong> {licenseData.validTill}
-                  </div>
-                  <div>
-                    <strong>Blood Group:</strong> {licenseData.bloodGroup}
-                  </div>
-                  <div>
-                    <strong>Status:</strong> {licenseData.status}
-                  </div>
-                </div>
-                
-                {licenseData.covDetails && (
-                  <div style={{ marginTop: '12px', padding: '12px', background: 'white', borderRadius: '6px' }}>
-                    <strong>Vehicle Classes:</strong>
-                    <div style={{ marginTop: '8px' }}>
-                      {licenseData.covDetails.map((cov, idx) => (
-                        <span key={idx} style={{ 
-                          display: 'inline-block',
-                          padding: '4px 8px',
-                          background: '#dbeafe',
-                          color: '#1e40af',
-                          borderRadius: '4px',
-                          marginRight: '8px',
-                          fontSize: '0.85rem'
-                        }}>
-                          {cov.cov}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* UIDAI Aadhar Verification */}
-          <div className="form-section verification-section">
-            <h2 className="section-title">
-              <CreditCard size={20} />
-              Step 2: UIDAI Aadhar Verification
-            </h2>
             
-            <div style={{ 
-              background: '#fef3c7',
-              padding: '12px 16px',
-              borderRadius: '8px',
-              marginBottom: '20px',
-              border: '2px solid #fde68a',
-              color: '#92400e',
-              fontSize: '0.9rem'
-            }}>
-              <strong>📱 OTP Verification:</strong> OTP will be sent to Aadhar registered mobile number for verification.
-            </div>
-
             <div className="grid-3">
               <div className="input-group">
-                <label>Aadhar Number *</label>
+                <label>Mobile Number</label>
+                <input
+                  type="tel"
+                  value={formData.mobile}
+                  onChange={(e) => setFormData(prev => ({ ...prev, mobile: e.target.value }))}
+                  placeholder="9876543210"
+                  pattern="[0-9]{10}"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>Alternate Mobile</label>
+                <input
+                  type="tel"
+                  value={formData.alternateMobile}
+                  onChange={(e) => setFormData(prev => ({ ...prev, alternateMobile: e.target.value }))}
+                  placeholder="Optional alternate number"
+                  pattern="[0-9]{10}"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>Email ID</label>
+                <input
+                  type="email"
+                  value={formData.emailId}
+                  onChange={(e) => setFormData(prev => ({ ...prev, emailId: e.target.value }))}
+                  placeholder="driver@example.com"
+                />
+              </div>
+            </div>
+            
+            <div className="input-group">
+              <label>Address</label>
+              <textarea
+                value={formData.address}
+                onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
+                rows="2"
+                placeholder="Enter complete address"
+              />
+            </div>
+            
+            <div className="grid-3">
+              <div className="input-group">
+                <label>City</label>
+                <input
+                  type="text"
+                  value={formData.city}
+                  onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
+                  placeholder="City name"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>State</label>
+                <input
+                  type="text"
+                  value={formData.state}
+                  onChange={(e) => setFormData(prev => ({ ...prev, state: e.target.value }))}
+                  placeholder="State name"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>Pincode</label>
+                <input
+                  type="text"
+                  value={formData.pincode}
+                  onChange={(e) => setFormData(prev => ({ ...prev, pincode: e.target.value }))}
+                  pattern="[0-9]{6}"
+                  placeholder="6-digit pincode"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* License Details */}
+          <div className="form-section">
+            <h2 className="section-title">
+              <CreditCard size={20} />
+              License Details (Optional)
+            </h2>
+            
+            <div className="grid-3">
+              <div className="input-group">
+                <label>Driving License Number</label>
+                <input
+                  type="text"
+                  name="licenseNumber"
+                  value={formData.licenseNumber}
+                  onChange={(e) => setFormData(prev => ({ ...prev, licenseNumber: e.target.value.toUpperCase().trim() }))}
+                  placeholder="MP4120131062332"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>License Type</label>
+                <input
+                  type="text"
+                  value={formData.licenseType}
+                  onChange={(e) => setFormData(prev => ({ ...prev, licenseType: e.target.value }))}
+                  placeholder="e.g., LMV-NT, MCWG"
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>License Issue Date</label>
+                <input
+                  type="date"
+                  value={formData.licenseIssueDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, licenseIssueDate: e.target.value }))}
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>License Expiry Date</label>
+                <input
+                  type="date"
+                  value={formData.licenseExpiryDate}
+                  onChange={(e) => setFormData(prev => ({ ...prev, licenseExpiryDate: e.target.value }))}
+                />
+              </div>
+              
+              <div className="input-group">
+                <label>Aadhar Number</label>
                 <input
                   type="text"
                   value={formData.aadharNumber}
                   onChange={(e) => setFormData(prev => ({ ...prev, aadharNumber: e.target.value.replace(/\D/g, '') }))}
-                  placeholder="XXXX XXXX XXXX"
+                  placeholder="12-digit Aadhar number"
                   maxLength="12"
-                  required
-                  disabled={aadharVerified}
-                  className={aadharVerified ? 'auto-filled' : ''}
-                />
-              </div>
-              
-              <div className="input-group">
-                <label>Send OTP</label>
-                <button
-                  type="button"
-                  className="btn btn-verify"
-                  onClick={sendAadharOtp}
-                  disabled={aadharVerifying || aadharOtpSent || aadharVerified || !formData.aadharNumber}
-                  style={{ width: '100%' }}
-                >
-                  {aadharVerifying ? (
-                    <>
-                      <div className="spinner" />
-                      Sending...
-                    </>
-                  ) : aadharOtpSent ? (
-                    <>
-                      <CheckCircle size={18} />
-                      OTP Sent
-                    </>
-                  ) : (
-                    <>
-                      <Shield size={18} />
-                      Send OTP to Mobile
-                    </>
-                  )}
-                </button>
-              </div>
-              
-              <div className="input-group">
-                <label>Enter OTP</label>
-                <input
-                  type="text"
-                  value={aadharOtp}
-                  onChange={(e) => setAadharOtp(e.target.value.replace(/\D/g, ''))}
-                  placeholder="6-digit OTP"
-                  maxLength="6"
-                  disabled={!aadharOtpSent || aadharVerified}
                 />
               </div>
             </div>
-
-            {aadharOtpSent && !aadharVerified && (
-              <div style={{ marginTop: '16px' }}>
-                <button
-                  type="button"
-                  className="btn btn-success"
-                  onClick={verifyAadharOtp}
-                  disabled={aadharVerifying || !aadharOtp}
-                >
-                  {aadharVerifying ? (
-                    <>
-                      <div className="spinner" />
-                      Verifying OTP...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle size={18} />
-                      Verify OTP & Fetch Details
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-
-            {aadharVerified && aadharData && (
-              <div className="verification-card verification-success">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                  <CheckCircle size={24} color="#10b981" />
-                  <strong style={{ fontSize: '1.1rem', color: '#065f46' }}>
-                    ✅ Aadhar Verified with UIDAI
-                  </strong>
-                </div>
-                
-                <div className="grid-3" style={{ fontSize: '0.9rem' }}>
-                  <div>
-                    <strong>Name:</strong> {aadharData.name}
-                  </div>
-                  <div>
-                    <strong>DOB:</strong> {aadharData.dob}
-                  </div>
-                  <div>
-                    <strong>Gender:</strong> {aadharData.gender === 'M' ? 'Male' : 'Female'}
-                  </div>
-                  <div style={{ gridColumn: 'span 3' }}>
-                    <strong>Address:</strong> {aadharData.address?.combined}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
-
-          {/* Auto-Filled Driver Details */}
-          {(licenseVerified || aadharVerified) && (
-            <div className="form-section">
-              <h2 className="section-title">
-                <CheckCircle size={20} />
-                Auto-Filled Driver Details
-                <span className="verified-badge" style={{ marginLeft: 'auto' }}>
-                  <Shield size={14} />
-                  Government Verified
-                </span>
-              </h2>
-              
-              <div className="grid-3">
-                <div className="input-group">
-                  <label>Driver Name *</label>
-                  <input
-                    type="text"
-                    value={formData.driverName}
-                    onChange={(e) => setFormData(prev => ({ ...prev, driverName: e.target.value }))}
-                    required
-                    className="auto-filled"
-                  />
-                </div>
-                
-                <div className="input-group">
-                  <label>Father's Name</label>
-                  <input
-                    type="text"
-                    value={formData.fatherName}
-                    onChange={(e) => setFormData(prev => ({ ...prev, fatherName: e.target.value }))}
-                    className={formData.fatherName ? 'auto-filled' : ''}
-                  />
-                </div>
-                
-                <div className="input-group">
-                  <label>Date of Birth *</label>
-                  <input
-                    type="date"
-                    value={formData.dateOfBirth}
-                    onChange={(e) => setFormData(prev => ({ ...prev, dateOfBirth: e.target.value }))}
-                    required
-                    className="auto-filled"
-                  />
-                </div>
-              </div>
-              
-              <div className="grid-3">
-                <div className="input-group">
-                  <label>Gender</label>
-                  <select
-                    value={formData.gender}
-                    onChange={(e) => setFormData(prev => ({ ...prev, gender: e.target.value }))}
-                    className={formData.gender ? 'auto-filled' : ''}
-                  >
-                    <option value="">-- Select --</option>
-                    <option value="Male">Male</option>
-                    <option value="Female">Female</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-                
-                <div className="input-group">
-                  <label>Blood Group</label>
-                  <select
-                    value={formData.bloodGroup}
-                    onChange={(e) => setFormData(prev => ({ ...prev, bloodGroup: e.target.value }))}
-                    className={formData.bloodGroup ? 'auto-filled' : ''}
-                  >
-                    <option value="">-- Select --</option>
-                    <option value="A+">A+</option>
-                    <option value="A-">A-</option>
-                    <option value="B+">B+</option>
-                    <option value="B-">B-</option>
-                    <option value="O+">O+</option>
-                    <option value="O-">O-</option>
-                    <option value="AB+">AB+</option>
-                    <option value="AB-">AB-</option>
-                  </select>
-                </div>
-                
-                <div className="input-group">
-                  <label>Mobile Number *</label>
-                  <input
-                    type="tel"
-                    value={formData.mobile}
-                    onChange={(e) => setFormData(prev => ({ ...prev, mobile: e.target.value }))}
-                    placeholder="9876543210"
-                    pattern="[0-9]{10}"
-                    required
-                    className={formData.mobile ? 'auto-filled' : ''}
-                  />
-                </div>
-              </div>
-              
-              <div className="input-group">
-                <label>Address *</label>
-                <textarea
-                  value={formData.address}
-                  onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
-                  rows="2"
-                  required
-                  className="auto-filled"
-                />
-              </div>
-              
-              <div className="grid-3">
-                <div className="input-group">
-                  <label>City *</label>
-                  <input
-                    type="text"
-                    value={formData.city}
-                    onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
-                    required
-                    className={formData.city ? 'auto-filled' : ''}
-                  />
-                </div>
-                
-                <div className="input-group">
-                  <label>State *</label>
-                  <input
-                    type="text"
-                    value={formData.state}
-                    onChange={(e) => setFormData(prev => ({ ...prev, state: e.target.value }))}
-                    required
-                    className={formData.state ? 'auto-filled' : ''}
-                  />
-                </div>
-                
-                <div className="input-group">
-                  <label>Pincode *</label>
-                  <input
-                    type="text"
-                    value={formData.pincode}
-                    onChange={(e) => setFormData(prev => ({ ...prev, pincode: e.target.value }))}
-                    pattern="[0-9]{6}"
-                    required
-                    className={formData.pincode ? 'auto-filled' : ''}
-                  />
-                </div>
-              </div>
-              
-              <div className="grid-3">
-                <div className="input-group">
-                  <label>License Type *</label>
-                  <input
-                    type="text"
-                    value={formData.licenseType}
-                    onChange={(e) => setFormData(prev => ({ ...prev, licenseType: e.target.value }))}
-                    required
-                    className="auto-filled"
-                  />
-                </div>
-                
-                <div className="input-group">
-                  <label>License Issue Date</label>
-                  <input
-                    type="date"
-                    value={formData.licenseIssueDate}
-                    onChange={(e) => setFormData(prev => ({ ...prev, licenseIssueDate: e.target.value }))}
-                    className={formData.licenseIssueDate ? 'auto-filled' : ''}
-                  />
-                </div>
-                
-                <div className="input-group">
-                  <label>License Expiry Date *</label>
-                  <input
-                    type="date"
-                    value={formData.licenseExpiryDate}
-                    onChange={(e) => setFormData(prev => ({ ...prev, licenseExpiryDate: e.target.value }))}
-                    required
-                    className="auto-filled"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Document Upload */}
           <div className="form-section">
@@ -1218,22 +1012,20 @@ export default function DriverMasterWithGovVerification() {
             
             <div className="grid-3">
               <div className="input-group">
-                <label>Salary *</label>
+                <label>Salary</label>
                 <input
                   type="number"
                   step="0.01"
                   value={formData.salary}
                   onChange={(e) => setFormData(prev => ({ ...prev, salary: e.target.value }))}
-                  required
                 />
               </div>
               
               <div className="input-group">
-                <label>Salary Type *</label>
+                <label>Salary Type</label>
                 <select
                   value={formData.salaryType}
                   onChange={(e) => setFormData(prev => ({ ...prev, salaryType: e.target.value }))}
-                  required
                 >
                   <option value="Monthly">Monthly</option>
                   <option value="Per Trip">Per Trip</option>
@@ -1242,12 +1034,11 @@ export default function DriverMasterWithGovVerification() {
               </div>
               
               <div className="input-group">
-                <label>Joining Date *</label>
+                <label>Joining Date</label>
                 <input
                   type="date"
                   value={formData.joinDate}
                   onChange={(e) => setFormData(prev => ({ ...prev, joinDate: e.target.value }))}
-                  required
                 />
               </div>
             </div>
@@ -1279,10 +1070,9 @@ export default function DriverMasterWithGovVerification() {
               type="submit" 
               className="btn btn-primary" 
               style={{ fontSize: '1.1rem', padding: '14px 40px' }}
-              disabled={!licenseVerified || !aadharVerified}
             >
               <Save size={20} />
-              Add Verified Driver (Continue Adding)
+              Add Driver (Continue Adding)
             </button>
           </div>
         </form>
@@ -1290,7 +1080,7 @@ export default function DriverMasterWithGovVerification() {
         {/* Driver List */}
         {drivers.length > 0 && (
           <div className="form-section" style={{ marginTop: '40px' }}>
-            <h2 className="section-title">Verified Drivers ({drivers.length})</h2>
+            <h2 className="section-title">Drivers List ({drivers.length})</h2>
             
             {drivers.slice().reverse().map(driver => (
               <div key={driver.id} style={{
@@ -1303,14 +1093,10 @@ export default function DriverMasterWithGovVerification() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
                   <div>
                     <h3 style={{ fontSize: '1.3rem', color: '#3b82f6', marginBottom: '4px' }}>
-                      {driver.driverName}
-                      <span className="verified-badge" style={{ marginLeft: '12px' }}>
-                        <Shield size={14} />
-                        VAHAN + UIDAI VERIFIED
-                      </span>
+                      {driver.nickName ? `${driver.driverName} (${driver.nickName})` : driver.driverName}
                     </h3>
                     <p style={{ color: '#64748b', fontSize: '0.9rem' }}>
-                      {driver.mobile} | {driver.licenseNumber} | {driver.aadharNumber}
+                      {driver.mobile ? `Mobile: ${driver.mobile}` : ''} {driver.licenseNumber ? `| License: ${driver.licenseNumber}` : ''} {driver.aadharNumber ? `| Aadhar: ${driver.aadharNumber}` : ''}
                     </p>
                   </div>
                   <button className="btn btn-danger" onClick={() => deleteDriver(driver.id)}>

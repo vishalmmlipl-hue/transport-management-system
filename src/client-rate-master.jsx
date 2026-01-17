@@ -2,6 +2,21 @@
 import React, { useState, useEffect } from 'react';
 import { tbbClientsService } from './services/dataService';
 import { Save, Plus, Trash2, Edit2, DollarSign, Package, MapPin, Weight, Truck, Download, Upload, FileSpreadsheet } from 'lucide-react';
+import { apiService } from './utils/apiService';
+import syncService from './utils/sync-service';
+
+const parseMaybeJson = (value) => {
+  if (value == null) return value;
+  if (typeof value === 'object') return value;
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
 
 export default function ClientRateMaster() {
   const [clients, setClients] = useState([]);
@@ -12,17 +27,60 @@ export default function ClientRateMaster() {
   const [rateType, setRateType] = useState('per-box');
 
   useEffect(() => {
-    // Load TBB clients from backend
-    async function fetchClients() {
+    // Load clients + cities (cities are required for Origin/Destination dropdowns)
+    async function fetchMasterData() {
       try {
-        const allClients = await tbbClientsService.getAll();
-        setClients((allClients || []).filter(c => c.status === 'Active' && c.clientType === 'TBB'));
+        const [clientsResp, citiesResp] = await Promise.all([
+          tbbClientsService.getAll().catch(() => []),
+          apiService.getCities().catch(() => []),
+        ]);
+
+        const clientList = Array.isArray(clientsResp) ? clientsResp : (clientsResp?.data || []);
+        const normalizedClients = (clientList || []).map(c => ({
+          ...c,
+          // Ensure fields exist across schemas
+          clientType: c.clientType || 'TBB',
+          companyName: c.companyName || c.clientName || c.client_name,
+          clientName: c.clientName || c.companyName || c.client_name,
+          clientCode: c.clientCode || c.code || c.client_code || '',
+          code: c.code || c.clientCode || c.client_code || '',
+        }));
+        setClients((normalizedClients || []).filter(c => (c.status === 'Active' || !c.status) && (String(c.clientType || '').toUpperCase() === 'TBB')));
+
+        const cityList = Array.isArray(citiesResp) ? citiesResp : (citiesResp?.data || []);
+        // Keep only active cities; normalize common fields
+        const normalizedCities = (cityList || [])
+          .filter(c => c && (c.status === 'Active' || !c.status))
+          .map(c => ({
+            ...c,
+            id: c.id,
+            code: c.code,
+            cityName: c.cityName || c.name || c.city || '',
+            state: c.state || '',
+          }))
+          .filter(c => c.id != null && c.cityName);
+        setCities(normalizedCities);
+
+        // Load rates from server (shared across systems)
+        const ratesRes = await syncService.load('clientRates').catch(() => ({ data: [] }));
+        const rawRates = Array.isArray(ratesRes) ? ratesRes : (ratesRes?.data || []);
+        const hydratedRates = (rawRates || []).map(r => {
+          const payload = parseMaybeJson(r?.data);
+          if (payload && typeof payload === 'object') {
+            return { ...payload, id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, clientId: payload.clientId ?? r.clientId, clientCode: payload.clientCode ?? r.clientCode };
+          }
+          return r;
+        });
+        setClientRates(hydratedRates);
       } catch (err) {
+        console.error('Error loading Client Rate Master data:', err);
         setClients([]);
+        setCities([]);
+        setClientRates([]);
       }
     }
-    fetchClients();
-    // TODO: Replace cities and clientRates with backend fetch as well
+
+    fetchMasterData();
   }, []);
 
   const [formData, setFormData] = useState({
@@ -167,28 +225,49 @@ export default function ClientRateMaster() {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    const existingRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-    
-    if (editingId) {
-      const updated = existingRates.map(rate => 
-        rate.id === editingId ? { ...formData, id: editingId, updatedAt: new Date().toISOString() } : rate
-      );
-      localStorage.setItem('clientRates', JSON.stringify(updated));
-      setClientRates(updated);
-      setEditingId(null);
-    } else {
-      const newRate = {
-        id: Date.now(),
+
+    const client = clients.find(c => c.id?.toString() === formData.clientId?.toString());
+    const clientCode = client?.clientCode || client?.code || '';
+    const dbPayload = {
+      clientId: formData.clientId?.toString() || '',
+      clientCode,
+      rateType: formData.rateType || formData.rateType,
+      status: formData.status || 'Active',
+      effectiveDate: formData.effectiveDate || new Date().toISOString().split('T')[0],
+      showAmountsInPrint: formData.showAmountsInPrint ? 1 : 0,
+      data: {
         ...formData,
-        createdAt: new Date().toISOString()
-      };
-      
-      existingRates.push(newRate);
-      localStorage.setItem('clientRates', JSON.stringify(existingRates));
-      setClientRates(existingRates);
+        clientCode,
+        id: undefined,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      if (editingId) {
+        await syncService.save('clientRates', dbPayload, true, editingId);
+        setEditingId(null);
+      } else {
+        const { id, ...payloadNoId } = dbPayload; // ensure no id on create
+        await syncService.save('clientRates', payloadNoId, false, null);
+      }
+
+      const ratesRes = await syncService.load('clientRates', true).catch(() => ({ data: [] }));
+      const rawRates = Array.isArray(ratesRes) ? ratesRes : (ratesRes?.data || []);
+      const hydratedRates = (rawRates || []).map(r => {
+        const payload = parseMaybeJson(r?.data);
+        if (payload && typeof payload === 'object') {
+          return { ...payload, id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, clientId: payload.clientId ?? r.clientId, clientCode: payload.clientCode ?? r.clientCode };
+        }
+        return r;
+      });
+      setClientRates(hydratedRates);
+    } catch (err) {
+      console.error('Client rate save error:', err);
+      alert(`❌ Failed to save client rate.\n\n${err?.message || err}`);
+      return;
     }
 
     setShowSuccessMessage(true);
@@ -235,11 +314,18 @@ export default function ClientRateMaster() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const deleteRate = (id) => {
+  const deleteRate = async (id) => {
     if (window.confirm('Are you sure you want to delete this rate?')) {
-      const updated = clientRates.filter(r => r.id !== id);
-      localStorage.setItem('clientRates', JSON.stringify(updated));
-      setClientRates(updated);
+      try {
+        // Use backend delete so it disappears on all systems
+        const databaseAPI = (await import('./utils/database-api')).default;
+        await databaseAPI.delete('clientRates', id);
+        const updated = clientRates.filter(r => r.id !== id);
+        setClientRates(updated);
+      } catch (err) {
+        console.error('Client rate delete error:', err);
+        alert(`❌ Failed to delete rate.\n\n${err?.message || err}`);
+      }
     }
   };
 
@@ -249,8 +335,14 @@ export default function ClientRateMaster() {
   };
 
   const getCityName = (cityId) => {
-    const city = cities.find(c => c.id.toString() === cityId);
-    return city ? city.cityName : cityId;
+    if (!cityId) return '';
+    const val = cityId.toString();
+    const city = cities.find(c =>
+      c.id?.toString() === val ||
+      c.code?.toString() === val ||
+      c.cityName?.toString() === val
+    );
+    return city ? `${city.cityName}${city.state ? `, ${city.state}` : ''}` : cityId;
   };
 
   // Excel Template Download
@@ -343,7 +435,7 @@ export default function ClientRateMaster() {
     }
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
@@ -361,13 +453,13 @@ export default function ClientRateMaster() {
         const dataRows = jsonData.slice(4).filter(row => row[0]); // Skip empty rows
 
         let importedCount = 0;
-        const existingRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
+        const newRates = [];
 
         dataRows.forEach(row => {
           if (!row[0]) return; // Skip empty client code
 
           const clientCode = row[0].toString().trim();
-          const client = clients.find(c => c.code === clientCode);
+          const client = clients.find(c => (c.clientCode || c.code) === clientCode);
           if (!client) {
             console.warn(`Client not found: ${clientCode}`);
             return;
@@ -376,6 +468,7 @@ export default function ClientRateMaster() {
           let newRate = {
             id: Date.now() + Math.random(),
             clientId: client.id.toString(),
+            clientCode,
             rateType: rateType,
             perBoxRates: [],
             cityWiseRates: [],
@@ -442,12 +535,35 @@ export default function ClientRateMaster() {
             }
           }
 
-          existingRates.push(newRate);
+          newRates.push(newRate);
           importedCount++;
         });
 
-        localStorage.setItem('clientRates', JSON.stringify(existingRates));
-        setClientRates(existingRates);
+        // Save imported rates to server so they appear on all systems
+        for (const r of newRates) {
+          const dbPayload = {
+            clientId: r.clientId?.toString() || '',
+            clientCode: (clients.find(c => c.id?.toString() === r.clientId?.toString())?.clientCode) || r.clientCode || '',
+            rateType: r.rateType || '',
+            status: r.status || 'Active',
+            effectiveDate: r.effectiveDate || new Date().toISOString().split('T')[0],
+            showAmountsInPrint: r.showAmountsInPrint ? 1 : 0,
+            data: { ...r, id: undefined },
+            updatedAt: new Date().toISOString(),
+          };
+          await syncService.save('clientRates', dbPayload, false, null);
+        }
+
+        const ratesRes = await syncService.load('clientRates', true).catch(() => ({ data: [] }));
+        const rawRates = Array.isArray(ratesRes) ? ratesRes : (ratesRes?.data || []);
+        const hydratedRates = (rawRates || []).map(r => {
+          const payload = parseMaybeJson(r?.data);
+          if (payload && typeof payload === 'object') {
+            return { ...payload, id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, clientId: payload.clientId ?? r.clientId, clientCode: payload.clientCode ?? r.clientCode };
+          }
+          return r;
+        });
+        setClientRates(hydratedRates);
 
         alert(`✅ Successfully imported ${importedCount} rate(s)!`);
         event.target.value = ''; // Reset file input

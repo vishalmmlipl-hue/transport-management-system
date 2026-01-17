@@ -86,11 +86,18 @@ db.serialize(() => {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     vehicleNumber TEXT UNIQUE NOT NULL,
     vehicleType TEXT NOT NULL,
-    ownerName TEXT,
-    ownerMobile TEXT,
-    ownerAddress TEXT,
+    ownershipType TEXT,
     capacity TEXT,
+    capacityUnit TEXT,
+    owner TEXT,
+    insurance TEXT,
+    tp TEXT,
+    fitness TEXT,
+    permit TEXT,
+    rcBook TEXT,
     status TEXT DEFAULT 'Active',
+    remarks TEXT,
+    data TEXT,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -99,10 +106,31 @@ db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS drivers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     driverName TEXT NOT NULL,
-    licenseNumber TEXT UNIQUE NOT NULL,
+    nickName TEXT,
+    fatherName TEXT,
     mobile TEXT,
+    alternateMobile TEXT,
     address TEXT,
+    city TEXT,
+    state TEXT,
+    pincode TEXT,
+    licenseNumber TEXT,
+    licenseExpiryDate TEXT,
+    licenseIssueDate TEXT,
+    licenseType TEXT,
+    bloodGroup TEXT,
+    dateOfBirth TEXT,
+    gender TEXT,
+    aadharNumber TEXT,
+    emailId TEXT,
+    emergencyContactName TEXT,
+    emergencyContactNumber TEXT,
+    salary TEXT,
+    salaryType TEXT,
+    joinDate TEXT,
     status TEXT DEFAULT 'Active',
+    remarks TEXT,
+    data TEXT,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -112,15 +140,47 @@ db.serialize(() => {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     staffName TEXT NOT NULL,
     staffCode TEXT UNIQUE NOT NULL,
+    fatherName TEXT,
+    dateOfBirth TEXT,
+    bloodGroup TEXT,
     designation TEXT,
     department TEXT,
     branch TEXT,
     mobile TEXT,
     email TEXT,
     address TEXT,
+    contactDetails TEXT,
+    aadharNumber TEXT,
+    panNumber TEXT,
+    bankDetails TEXT,
+    salaryType TEXT,
+    salaryDetails TEXT,
+    joiningDate TEXT,
+    remarks TEXT,
     status TEXT DEFAULT 'Active',
+    data TEXT,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Staff Attendance table
+  db.run(`CREATE TABLE IF NOT EXISTS staffAttendance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staffId INTEGER NOT NULL,
+    staffName TEXT,
+    branchId INTEGER,
+    branchName TEXT,
+    attendanceDate TEXT NOT NULL,
+    status TEXT NOT NULL,
+    checkInTime TEXT,
+    checkOutTime TEXT,
+    location TEXT,
+    remarks TEXT,
+    isMobileApp INTEGER DEFAULT 0,
+    deviceInfo TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (staffId) REFERENCES staff(id)
   )`);
 
   // LR Bookings table
@@ -278,12 +338,28 @@ db.serialize(() => {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     clientCode TEXT UNIQUE NOT NULL,
     clientName TEXT NOT NULL,
+    clientType TEXT,
     contactPerson TEXT,
     mobile TEXT,
     email TEXT,
     address TEXT,
     gstNumber TEXT,
     status TEXT DEFAULT 'Active',
+    data TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Client Rates table (stored in DB so rates are shared across systems)
+  db.run(`CREATE TABLE IF NOT EXISTS clientRates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    clientId TEXT,
+    clientCode TEXT,
+    rateType TEXT,
+    status TEXT DEFAULT 'Active',
+    effectiveDate TEXT,
+    showAmountsInPrint INTEGER DEFAULT 1,
+    data TEXT,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -297,6 +373,7 @@ db.serialize(() => {
     parentAccount TEXT,
     balance TEXT DEFAULT '0',
     status TEXT DEFAULT 'Active',
+    data TEXT,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -328,6 +405,48 @@ db.serialize(() => {
     paymentMode TEXT,
     account TEXT,
     description TEXT,
+    data TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Branch Accounts (Bank/UPI/Cash accounts used for Day Book payments)
+  db.run(`CREATE TABLE IF NOT EXISTS branchAccounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    accountType TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    accountName TEXT NOT NULL,
+    accountNumber TEXT,
+    bankName TEXT,
+    ifscCode TEXT,
+    openingBalance TEXT DEFAULT '0',
+    currentBalance TEXT DEFAULT '0',
+    accountId TEXT,
+    status TEXT DEFAULT 'Active',
+    data TEXT,
+    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Vehicle Maintenance table
+  db.run(`CREATE TABLE IF NOT EXISTS vehicleMaintenance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vehicleNumber TEXT NOT NULL,
+    maintenanceDate TEXT NOT NULL,
+    maintenanceType TEXT,
+    workshopName TEXT,
+    driverName TEXT,
+    parts TEXT,
+    labourCharges TEXT,
+    totalCost TEXT,
+    expenseTypeId TEXT,
+    expenseType TEXT,
+    accountId TEXT,
+    remarks TEXT,
+    billName TEXT,
+    billType TEXT,
+    billData TEXT,
+    status TEXT DEFAULT 'Active',
     data TEXT,
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP

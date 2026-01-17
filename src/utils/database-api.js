@@ -62,7 +62,16 @@ const apiCall = async (endpoint, options = {}) => {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`   ❌ API Error (${endpoint}):`, response.status, errorText);
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      // Server reachable but returned an error -> DO NOT fallback to localStorage here
+      // Return a structured error so callers can decide how to handle it.
+      let message = errorText;
+      try {
+        const parsed = JSON.parse(errorText);
+        message = parsed?.error || parsed?.message || errorText;
+      } catch (_) {
+        // keep raw text
+      }
+      return { success: false, error: message, status: response.status, fallback: false };
     }
 
     const data = await response.json();
@@ -103,7 +112,20 @@ export const databaseAPI = {
   },
 
   async create(tableName, data) {
+    // Debug: Log what's being sent
+    const dataKeys = Object.keys(data || {});
     console.log(`   📤 Creating ${tableName}:`, data);
+    console.log(`   🔍 Data keys being sent:`, dataKeys);
+    if (tableName === 'otherVendors' || tableName === 'marketVehicleVendors') {
+      const allowedKeys = ['id', 'code', 'status', 'createdAt', 'updatedAt', 'data'];
+      const unexpectedKeys = dataKeys.filter(k => !allowedKeys.includes(k));
+      if (unexpectedKeys.length > 0) {
+        console.error(`   ❌ ERROR: Unexpected keys in ${tableName} data:`, unexpectedKeys);
+        console.error(`   ❌ This data should have been filtered!`);
+      } else {
+        console.log(`   ✅ Data correctly filtered for ${tableName}`);
+      }
+    }
     const result = await apiCall(`/${tableName}`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -114,6 +136,13 @@ export const databaseAPI = {
       console.log(`   ✅ Successfully created ${tableName}`);
       return result.data;
     }
+
+    // Server reachable but rejected request -> DO NOT create local fallback records
+    if (result && result.success === false && result.fallback === false) {
+      console.warn(`   ❌ Create rejected by server for ${tableName}:`, result.error);
+      return { success: false, error: result.error, fallback: false };
+    }
+
     // Fallback to localStorage - mark it so sync-service knows it failed
     console.warn(`   ⚠️ Create failed for ${tableName}, using localStorage fallback`);
     const fallbackResult = this.createLocalStorage(tableName, data);
@@ -133,6 +162,13 @@ export const databaseAPI = {
       console.log(`   ✅ Successfully updated ${tableName}`);
       return result.data;
     }
+
+    // Server reachable but rejected request -> DO NOT create local fallback records
+    if (result && result.success === false && result.fallback === false) {
+      console.warn(`   ❌ Update rejected by server for ${tableName}:`, result.error);
+      return { success: false, error: result.error, fallback: false };
+    }
+
     // Fallback to localStorage - mark it so sync-service knows it failed
     console.warn(`   ⚠️ Update failed for ${tableName}, using localStorage fallback`);
     const fallbackResult = this.updateLocalStorage(tableName, id, data);

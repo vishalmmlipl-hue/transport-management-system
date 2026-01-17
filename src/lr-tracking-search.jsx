@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, FileText, Eye, Edit, Trash2, X, Printer } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
-import { lrBookingsService, manifestsService, invoicesService } from './services/dataService';
+import { apiService } from './utils/apiService';
 
 const monoStyle = {
   fontFamily: "'Space Mono', monospace"
@@ -12,24 +12,70 @@ export default function LRTrackingSearch({ onLRSelect }) {
   const [lrBookings, setLrBookings] = useState([]);
   const [manifests, setManifests] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [cities, setCities] = useState([]);
   const [filteredLRs, setFilteredLRs] = useState([]);
   const [selectedLR, setSelectedLR] = useState(null);
   const [showPrintView, setShowPrintView] = useState(false);
   const [printLRId, setPrintLRId] = useState(null);
+  const [printLRTable, setPrintLRTable] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
-      const [allLRs, allManifests, allInvoices] = await Promise.all([
-        lrBookingsService.getAll(),
-        manifestsService.getAll(),
-        invoicesService.getAll()
-      ]);
-      setLrBookings(allLRs);
-      setManifests(allManifests);
-      setInvoices(allInvoices);
+      try {
+        const [allLRsResult, allPTLResult, allFTLResult, allManifestsResult, allInvoicesResult, allCitiesResult] = await Promise.all([
+          apiService.getLRBookings().catch(() => ({ data: [] })),
+          apiService.getPTLLRBookings().catch(() => ({ data: [] })),
+          apiService.getFTLLRBookings().catch(() => ({ data: [] })),
+          apiService.getManifests().catch(() => ({ data: [] })),
+          apiService.getInvoices().catch(() => ({ data: [] })),
+          apiService.getCities().catch(() => ({ data: [] }))
+        ]);
+        
+        // Extract data from API responses
+        const baseLRs = Array.isArray(allLRsResult) ? allLRsResult : (allLRsResult?.data || []);
+        const ptlLRs = Array.isArray(allPTLResult) ? allPTLResult : (allPTLResult?.data || []);
+        const ftlLRs = Array.isArray(allFTLResult) ? allFTLResult : (allFTLResult?.data || []);
+        const allManifests = Array.isArray(allManifestsResult) ? allManifestsResult : (allManifestsResult?.data || []);
+        const allInvoices = Array.isArray(allInvoicesResult) ? allInvoicesResult : (allInvoicesResult?.data || []);
+        const allCities = Array.isArray(allCitiesResult) ? allCitiesResult : (allCitiesResult?.data || []);
+        
+        // Combine LR tables (ids can collide across tables, so keep __key)
+        const combined = [
+          ...baseLRs.map(lr => ({ ...lr, __table: 'lrBookings', bookingMode: lr.bookingMode || 'PTL', __key: `lrBookings:${lr.id}` })),
+          ...ptlLRs.map(lr => ({ ...lr, __table: 'ptlLRBookings', bookingMode: 'PTL', __key: `ptlLRBookings:${lr.id}` })),
+          ...ftlLRs.map(lr => ({ ...lr, __table: 'ftlLRBookings', bookingMode: 'FTL', __key: `ftlLRBookings:${lr.id}` })),
+        ];
+
+        setLrBookings(combined);
+        setManifests(allManifests);
+        setInvoices(allInvoices);
+        setCities(allCities);
+      } catch (error) {
+        console.error('Error loading LR tracking data:', error);
+        setLrBookings([]);
+        setManifests([]);
+        setInvoices([]);
+        setCities([]);
+      }
     };
     fetchData();
   }, []);
+
+  // Helper function to get city name from ID or code
+  const getCityName = (cityValue) => {
+    if (!cityValue) return '';
+    if (!cities || cities.length === 0) return cityValue;
+    
+    const city = cities.find(c => {
+      if (!c) return false;
+      if (c.id?.toString() === cityValue.toString()) return true;
+      if (c.code === cityValue || c.code?.toString() === cityValue.toString()) return true;
+      if (c.cityName === cityValue) return true;
+      return false;
+    });
+    
+    return city ? city.cityName : cityValue;
+  };
 
   useEffect(() => {
     if (!searchTerm.trim()) {
@@ -38,23 +84,30 @@ export default function LRTrackingSearch({ onLRSelect }) {
     }
 
     const term = searchTerm.toLowerCase();
-    const filtered = lrBookings.filter(lr => 
-      lr.lrNumber?.toLowerCase().includes(term) ||
-      lr.consignor?.name?.toLowerCase().includes(term) ||
-      lr.consignee?.name?.toLowerCase().includes(term) ||
-      lr.origin?.toLowerCase().includes(term) ||
-      lr.destination?.toLowerCase().includes(term) ||
-      lr.tbbClient?.toLowerCase().includes(term)
-    );
+    const filtered = (lrBookings || []).filter(lr => {
+      if (!lr) return false;
+      const originName = getCityName(lr.origin || lr.fromLocation).toLowerCase();
+      const destName = getCityName(lr.destination || lr.toLocation).toLowerCase();
+      const tbb = (lr.tbbClient ?? '').toString().toLowerCase();
+      return (
+        lr.lrNumber?.toLowerCase().includes(term) ||
+        lr.consignor?.name?.toLowerCase().includes(term) ||
+        lr.consignee?.name?.toLowerCase().includes(term) ||
+        originName.includes(term) ||
+        destName.includes(term) ||
+        tbb.includes(term) ||
+        lr.referenceNumber?.toLowerCase().includes(term)
+      );
+    });
     setFilteredLRs(filtered);
-  }, [searchTerm, lrBookings]);
+  }, [searchTerm, lrBookings, cities]);
 
   const getLRStatus = (lr) => {
     // Check if LR is in any manifest
     const inManifest = manifests.some(m => 
       m.selectedLRs?.some(mlr => {
         const mlrId = typeof mlr === 'object' ? mlr.id : mlr;
-        return mlrId === lr.id;
+        return mlrId === lr.id || (lr.lrNumber && mlr?.lrNumber === lr.lrNumber);
       })
     );
     
@@ -75,27 +128,53 @@ export default function LRTrackingSearch({ onLRSelect }) {
 
   const handleEditLR = (lr) => {
     if (onLRSelect) {
-      onLRSelect(lr.id.toString());
+      onLRSelect(lr.__key || lr.id.toString());
     } else {
       // Fallback: navigate directly if callback not provided
-      sessionStorage.setItem('editLRId', lr.id.toString());
+      if (lr.__table && lr.id != null) {
+        sessionStorage.setItem('editLRKey', `${lr.__table}:${lr.id}`);
+      } else {
+        sessionStorage.setItem('editLRId', lr.id.toString());
+      }
       window.location.hash = '#lr-modify';
     }
   };
 
-  const handleDeleteLR = async (lrId) => {
-    const status = getLRStatus(lrBookings.find(l => l.id === lrId));
+  const handleDeleteLR = async (lr) => {
+    const status = getLRStatus(lr);
     if (!status.canDelete) {
       alert('⚠️ Cannot delete this LR. It has been manifested or billed.');
       return;
     }
     if (window.confirm('Are you sure you want to delete this LR? This action cannot be undone.')) {
-      await lrBookingsService.delete(lrId);
-      const updatedLRs = await lrBookingsService.getAll();
-      setLrBookings(updatedLRs);
-      setSearchTerm('');
-      setFilteredLRs([]);
-      alert('✅ LR deleted successfully!');
+      try {
+        if (lr?.__table === 'ftlLRBookings') {
+          await apiService.deleteFTLLRBooking(lr.id);
+        } else if (lr?.__table === 'ptlLRBookings') {
+          await apiService.deletePTLLRBooking(lr.id);
+        } else {
+          await apiService.deleteLRBooking(lr.id);
+        }
+
+        // Reload combined list
+        const [baseLRs, ptlLRs, ftlLRs] = await Promise.all([
+          apiService.getLRBookings().catch(() => []),
+          apiService.getPTLLRBookings().catch(() => []),
+          apiService.getFTLLRBookings().catch(() => []),
+        ]);
+        const combined = [
+          ...(baseLRs || []).map(x => ({ ...x, __table: 'lrBookings', bookingMode: x.bookingMode || 'PTL', __key: `lrBookings:${x.id}` })),
+          ...(ptlLRs || []).map(x => ({ ...x, __table: 'ptlLRBookings', bookingMode: 'PTL', __key: `ptlLRBookings:${x.id}` })),
+          ...(ftlLRs || []).map(x => ({ ...x, __table: 'ftlLRBookings', bookingMode: 'FTL', __key: `ftlLRBookings:${x.id}` })),
+        ];
+        setLrBookings(combined);
+        setSearchTerm('');
+        setFilteredLRs([]);
+        alert('✅ LR deleted successfully!');
+      } catch (error) {
+        console.error('Error deleting LR:', error);
+        alert('❌ Error deleting LR: ' + (error.message || 'Unknown error'));
+      }
     }
   };
 
@@ -287,12 +366,17 @@ export default function LRTrackingSearch({ onLRSelect }) {
             {filteredLRs.map(lr => {
               const lrStatus = getLRStatus(lr);
               return (
-                <div key={lr.id} className="lr-result-card">
+                <div key={lr.__key || `${lr.__table || 'lrBookings'}:${lr.id}`} className="lr-result-card">
                   <div className="lr-header">
                     <div>
-                      <div className="lr-number" style={monoStyle}>{lr.lrNumber}</div>
+                      <div className="lr-number" style={monoStyle}>{lr.lrNumber || 'N/A'}</div>
+                      {lr.referenceNumber && (
+                        <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', marginTop: '2px' }}>
+                          Ref: {lr.referenceNumber}
+                        </div>
+                      )}
                       <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.6)', marginTop: '4px' }}>
-                        {lr.bookingDate}
+                        {lr.bookingDate || 'N/A'}
                       </div>
                     </div>
                     <span className="status-badge" style={{ background: lrStatus.color + '40', color: lrStatus.color }}>
@@ -301,12 +385,12 @@ export default function LRTrackingSearch({ onLRSelect }) {
                   </div>
                   
                   <div className="lr-details">
-                    <div><strong>From:</strong> {lr.origin}</div>
-                    <div><strong>To:</strong> {lr.destination}</div>
+                    <div><strong>From:</strong> {getCityName(lr.origin || lr.fromLocation) || 'N/A'}</div>
+                    <div><strong>To:</strong> {getCityName(lr.destination || lr.toLocation) || 'N/A'}</div>
                     <div><strong>Consignor:</strong> {lr.consignor?.name || 'N/A'}</div>
                     <div><strong>Consignee:</strong> {lr.consignee?.name || 'N/A'}</div>
-                    <div><strong>Pieces:</strong> {lr.pieces}</div>
-                    <div><strong>Weight:</strong> {lr.weight} Kg</div>
+                    <div><strong>Pieces:</strong> {lr.pieces || '0'}</div>
+                    <div><strong>Weight:</strong> {lr.weight || '0'} Kg</div>
                   </div>
 
                   <div className="lr-actions">
@@ -321,6 +405,7 @@ export default function LRTrackingSearch({ onLRSelect }) {
                       className="action-btn btn-view"
                       onClick={() => {
                         setPrintLRId(lr.id);
+                        setPrintLRTable(lr.__table || null);
                         setShowPrintView(true);
                       }}
                     >
@@ -343,7 +428,7 @@ export default function LRTrackingSearch({ onLRSelect }) {
                     </button>
                     <button
                       className={`action-btn btn-delete ${!lrStatus.canDelete ? 'btn-disabled' : ''}`}
-                      onClick={() => handleDeleteLR(lr.id)}
+                      onClick={() => handleDeleteLR(lr)}
                       disabled={!lrStatus.canDelete}
                     >
                       <Trash2 size={14} />
@@ -396,7 +481,7 @@ export default function LRTrackingSearch({ onLRSelect }) {
                 <strong>Booking Date:</strong> {selectedLR.bookingDate}
               </div>
               <div style={{ marginBottom: '12px' }}>
-                <strong>From:</strong> {selectedLR.origin} → <strong>To:</strong> {selectedLR.destination}
+                <strong>From:</strong> {getCityName(selectedLR.origin) || 'N/A'} → <strong>To:</strong> {getCityName(selectedLR.destination) || 'N/A'}
               </div>
               <div style={{ marginBottom: '12px' }}>
                 <strong>Consignor:</strong> {selectedLR.consignor?.name || 'N/A'}
@@ -433,9 +518,11 @@ export default function LRTrackingSearch({ onLRSelect }) {
         }}>
           <LRPrintView 
             lrId={printLRId} 
+            lrTable={printLRTable}
             onClose={() => {
               setShowPrintView(false);
               setPrintLRId(null);
+              setPrintLRTable(null);
             }} 
           />
         </div>

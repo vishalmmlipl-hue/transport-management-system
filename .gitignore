@@ -11,6 +11,21 @@
 # production
 /build
 
+
+# build outputs accidentally copied to repo root (deploy artifacts)
+/static/
+/asset-manifest.json
+/favicon.ico
+/index.html
+/logo192.png
+/logo512.png
+/manifest.json
+/robots.txt
+/_redirects
+
+# local sqlite db (server db is tracked separately as seed)
+/tms_database.db
+
 # misc
 .DS_Store
 .env.local

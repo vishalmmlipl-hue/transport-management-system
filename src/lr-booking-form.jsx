@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, Calculator, Printer, Search, Edit2 } from 'lucide-react';
 import LRPrintView from './lr-print-view.jsx';
 import { useLRBookings, usePTLLRBookings } from './hooks/useDataSync';
+import { apiService } from './utils/apiService';
 
 export default function LRBookingForm() {
   // Use hooks for bookings
@@ -10,6 +11,7 @@ export default function LRBookingForm() {
   
   // Load TBB clients from localStorage (will be updated later)
   const [tbbClients, setTbbClients] = useState([]);
+  const [sundryCreditorClients, setSundryCreditorClients] = useState([]);
   const [cities, setCities] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -17,10 +19,12 @@ export default function LRBookingForm() {
   const [saving, setSaving] = useState(false);
 
   const [selectedClient, setSelectedClient] = useState(null);
+  const [selectedSundryCreditor, setSelectedSundryCreditor] = useState(null);
   const [selectedOrigin, setSelectedOrigin] = useState(null);
   const [selectedDestination, setSelectedDestination] = useState(null);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [selectedBranch, setSelectedBranch] = useState(null);
+  const [lrSeries, setLrSeries] = useState([]); // LR series from LR Series Master
   
   // City search states for first 3 letters filtering
   const [originSearch, setOriginSearch] = useState('');
@@ -43,8 +47,12 @@ export default function LRBookingForm() {
     deliveryType: 'Godown',
     bookingDate: '',
     expectedDeliveryDate: '',
+    referenceNumber: '',
     paymentMode: 'Paid',
     tbbClient: '',
+    // For unpaid Cash/ToPay, track who will pay later
+    paymentReceived: true,
+    sundryCreditor: '',
     consignor: {
       name: '',
       address: '',
@@ -144,40 +152,97 @@ export default function LRBookingForm() {
     }
   }, [formData.destination, cities, selectedDestination]);
 
-  // Function to get the next LR number from the last saved LR
-  // Note: This will need to be updated to fetch from API, but keeping localStorage fallback for now
+  // Function to get the next LR number from the server
   const getNextLRNumber = () => {
-    const existingLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-    if (existingLRs.length === 0) {
-      // If no LRs exist, start from 1000000001
-      return '1000000001';
-    }
-    
-    // Get all LR numbers and find the highest one
-    const lrNumbers = existingLRs
-      .map(lr => lr.lrNumber)
-      .filter(num => num && num.length === 10 && !isNaN(num))
-      .map(num => parseInt(num))
-      .filter(num => !isNaN(num));
-    
-    if (lrNumbers.length === 0) {
-      return '1000000001';
-    }
-    
-    const maxLRNumber = Math.max(...lrNumbers);
-    const nextNumber = maxLRNumber + 1;
-    
-    // Ensure it's 10 digits
-    return nextNumber.toString().padStart(10, '0');
+    return new Promise(async (resolve) => {
+      try {
+        // Fetch existing LR bookings from server
+        const existingLRs = await apiService.getLRBookings();
+        
+        if (!existingLRs || existingLRs.length === 0) {
+          // If no LRs exist, start from 1000000001
+          resolve('1000000001');
+          return;
+        }
+        
+        // Get all LR numbers and find the highest one
+        const lrNumbers = existingLRs
+          .map(lr => lr.lrNumber)
+          .filter(num => num && num.length === 10 && !isNaN(num))
+          .map(num => parseInt(num))
+          .filter(num => !isNaN(num));
+        
+        if (lrNumbers.length === 0) {
+          resolve('1000000001');
+          return;
+        }
+        
+        const maxLRNumber = Math.max(...lrNumbers);
+        const nextNumber = maxLRNumber + 1;
+        
+        // Ensure it's 10 digits
+        resolve(nextNumber.toString().padStart(10, '0'));
+      } catch (error) {
+        console.warn('Could not fetch LR numbers from server, using timestamp:', error);
+        // Fallback: Use timestamp-based number
+        const timestamp = Date.now();
+        resolve(timestamp.toString().slice(-10).padStart(10, '0'));
+      }
+    });
   };
 
+  // Load LR series from localStorage (LR Series Master)
+  useEffect(() => {
+    const loadLRSeries = () => {
+      try {
+        const storedSeries = JSON.parse(localStorage.getItem('lrSeries') || '[]');
+        setLrSeries(storedSeries || []);
+      } catch (err) {
+        console.warn('Could not load LR series:', err);
+        setLrSeries([]);
+      }
+    };
+    
+    loadLRSeries();
+    
+    // Listen for storage changes to reload LR series
+    const handleStorageChange = () => {
+      loadLRSeries();
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
   // Generate LR number when mode is auto and number is empty
+  // Only allow auto mode if no LR series is assigned from LR Series Master
   useEffect(() => {
     if (formData && formData.lrMode === 'auto' && (!formData.lrNumber || formData.lrNumber === '')) {
-      const nextLR = getNextLRNumber();
-      setFormData(prev => ({ ...prev, lrNumber: nextLR }));
+      const branchId = formData.branch || (currentUser?.branch ? currentUser.branch.toString() : '');
+      const hasAssignedSeries = branchId && lrSeries.some(series => {
+        const mode = series?.bookingMode || 'PTL'; // backward compatible: old series are PTL
+        return (
+          series?.branchId?.toString() === branchId.toString() &&
+          series?.status === 'Active' &&
+          (mode === 'PTL' || mode === 'Both')
+        );
+      });
+      
+      // Only use automated LR if no series is assigned
+      if (!hasAssignedSeries) {
+        getNextLRNumber().then(nextLR => {
+          setFormData(prev => ({ ...prev, lrNumber: nextLR }));
+        }).catch(err => {
+          console.warn('Could not generate LR number:', err);
+          // Use timestamp as fallback
+          const timestamp = Date.now();
+          const fallbackLR = timestamp.toString().slice(-10).padStart(10, '0');
+          setFormData(prev => ({ ...prev, lrNumber: fallbackLR }));
+        });
+      }
+      // If series is assigned, don't auto-generate - user must use manual mode
     }
-  }, [formData?.lrMode]);
+  }, [formData?.lrMode, formData?.branch, lrSeries, currentUser]);
 
   useEffect(() => {
     calculateTotals();
@@ -186,7 +251,8 @@ export default function LRBookingForm() {
   // Set selected client when TBB client is selected
   useEffect(() => {
     if (formData.paymentMode === 'TBB' && formData.tbbClient) {
-      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient || c.code === formData.tbbClient);
+      // Only accept actual dropdown-selected client id (prevents accidental matching via consignor typing / stale codes)
+      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient?.toString());
       if (client) {
         setSelectedClient(client);
       } else {
@@ -224,7 +290,7 @@ export default function LRBookingForm() {
   // Fetch rate from Client Rate Master for TBB payment mode
   useEffect(() => {
     if (formData.paymentMode === 'TBB' && formData.tbbClient && formData.origin && formData.destination) {
-      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient || c.code === formData.tbbClient);
+      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient?.toString());
       const originCity = cities.find(c => c.code === formData.origin || c.id?.toString() === formData.origin);
       const destCity = cities.find(c => c.code === formData.destination || c.id?.toString() === formData.destination);
       
@@ -422,7 +488,7 @@ export default function LRBookingForm() {
   // Fetch freight from Rate Master for FTL + TBB mode
   useEffect(() => {
     if (formData.bookingMode === 'FTL' && formData.paymentMode === 'TBB' && formData.tbbClient && formData.origin && formData.destination) {
-      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient || c.code === formData.tbbClient);
+      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient?.toString());
       const originCity = cities.find(c => c.code === formData.origin || c.id?.toString() === formData.origin);
       const destCity = cities.find(c => c.code === formData.destination || c.id?.toString() === formData.destination);
       
@@ -476,7 +542,7 @@ export default function LRBookingForm() {
   // Fetch pickup/delivery charges from Rate Master for FTL + TBB mode
   useEffect(() => {
     if (formData.bookingMode === 'FTL' && formData.paymentMode === 'TBB' && formData.tbbClient && clientRates.length > 0 && cities.length > 0) {
-      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient || c.code === formData.tbbClient);
+      const client = tbbClients.find(c => c.id?.toString() === formData.tbbClient?.toString());
       
       if (client) {
         let updatedPickupPoints = [...formData.pickupPoints];
@@ -591,6 +657,42 @@ export default function LRBookingForm() {
     setIsAdmin(user?.role === 'Admin' || user?.role === 'Super Admin');
   }, []);
 
+  // For Admin: when Admin selects a branch in dashboard/topbar, force booking branch.
+  // If Admin selects "All", unlock and clear booking branch so user can choose any.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const onAdminBranchChanged = (e) => {
+      const branchId = e?.detail?.branchId ? String(e.detail.branchId) : null;
+      if (!branchId) return; // Admin selected ALL branches -> do not force
+      const b = (branches || []).find(x => String(x.id) === branchId);
+      if (b) {
+        setSelectedBranch(b);
+        setFormData(prev => ({ ...prev, branch: String(b.id) }));
+      } else {
+        // Branch list not ready yet; set raw id and it will map later
+        setFormData(prev => ({ ...prev, branch: branchId }));
+      }
+    };
+    window.addEventListener('adminBranchChanged', onAdminBranchChanged);
+    return () => window.removeEventListener('adminBranchChanged', onAdminBranchChanged);
+  }, [isAdmin, branches]);
+
+  // For Admin: on first load, apply persisted adminSelectedBranch (if any)
+  useEffect(() => {
+    if (!isAdmin) return;
+    const adminBranchId = localStorage.getItem('adminSelectedBranch');
+    if (!adminBranchId) return; // treat as ALL branches
+    if (formData.branch && String(formData.branch) === String(adminBranchId)) return;
+    const b = (branches || []).find(x => String(x.id) === String(adminBranchId));
+    if (b) {
+      setSelectedBranch(b);
+      setFormData(prev => ({ ...prev, branch: String(b.id) }));
+    } else if (adminBranchId) {
+      setFormData(prev => ({ ...prev, branch: String(adminBranchId) }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, branches]);
+
   // Function to load clients and other data from server
   const loadData = async () => {
     try {
@@ -621,20 +723,65 @@ export default function LRBookingForm() {
       const storedClients = JSON.parse(localStorage.getItem('tbbClients') || '[]');
       const allClients = clientsResult.data || [];
       const combinedClients = [...storedClients, ...allClients];
+
+      // Normalize clients across possible schemas; clientType may be missing in SQL schema.
+      const normalizedClients = (combinedClients || []).map(c => {
+        if (!c) return null;
+        return {
+          ...c,
+          code: c.code || c.clientCode || c.client_code,
+          clientCode: c.clientCode || c.code || c.client_code,
+          companyName: c.companyName || c.clientName || c.client_name,
+          clientName: c.clientName || c.companyName || c.client_name,
+        };
+      }).filter(Boolean);
+
+      const uniqByKey = (arr) => {
+        const seen = new Set();
+        return (arr || []).filter(item => {
+          const key = (item.id ?? item.code ?? item.clientCode ?? '').toString();
+          if (!key) return true;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
       
       // Only show active TBB clients
-      const activeTbbClients = combinedClients.filter(c => 
-        c.status === 'Active' && c.clientType === 'TBB'
-      );
-      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
-        index === self.findIndex(c => c.id === client.id)
-      );
+      const activeTbbClients = normalizedClients.filter(c => {
+        const ct = (c.clientType || '').toString().toUpperCase();
+        return (c.status === 'Active' || !c.status) && (!ct || ct === 'TBB');
+      });
+      const uniqueTbbClients = uniqByKey(activeTbbClients);
       setTbbClients(uniqueTbbClients);
+      try { localStorage.setItem('tbbClients', JSON.stringify(uniqueTbbClients)); } catch (e) {}
+
+      // Sundry Creditor clients: Active + (TBB/Credit) or missing type (treat as eligible)
+      const activeSundry = normalizedClients.filter(c => {
+        const ct = (c.clientType || '').toString().toUpperCase();
+        return (c.status === 'Active' || !c.status) && (!ct || ct === 'TBB' || ct === 'CREDIT');
+      });
+      setSundryCreditorClients(uniqByKey(activeSundry));
       
-      // Load client rates (from localStorage for now)
-      const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
-      const activeClientRates = storedClientRates.filter(r => r.status === 'Active');
-      setClientRates(activeClientRates);
+      // Load client rates (from server so rates are shared across systems)
+      const parseMaybeJson = (value) => {
+        if (value == null) return value;
+        if (typeof value === 'object') return value;
+        if (typeof value !== 'string') return value;
+        const t = value.trim();
+        if (!t) return value;
+        try { return JSON.parse(t); } catch { return value; }
+      };
+      const ratesRes = await syncService.load('clientRates').catch(() => ({ data: [] }));
+      const rawRates = Array.isArray(ratesRes) ? ratesRes : (ratesRes?.data || []);
+      const hydratedRates = (rawRates || []).map(r => {
+        const payload = parseMaybeJson(r?.data);
+        if (payload && typeof payload === 'object') {
+          return { ...payload, id: r.id, createdAt: r.createdAt, updatedAt: r.updatedAt, clientId: payload.clientId ?? r.clientId, clientCode: payload.clientCode ?? r.clientCode };
+        }
+        return r;
+      });
+      setClientRates((hydratedRates || []).filter(r => (r.status === 'Active' || !r.status)));
     } catch (error) {
       console.error('Error loading data:', error);
       // Fallback to localStorage
@@ -646,17 +793,45 @@ export default function LRBookingForm() {
       const storedClientRates = JSON.parse(localStorage.getItem('clientRates') || '[]');
       
       const combinedClients = [...storedClients, ...allClients];
-      const activeTbbClients = combinedClients.filter(c => 
-        c.status === 'Active' && c.clientType === 'TBB'
-      );
-      const uniqueTbbClients = activeTbbClients.filter((client, index, self) =>
-        index === self.findIndex(c => c.id === client.id)
-      );
+
+      const normalizedClients = (combinedClients || []).map(c => {
+        if (!c) return null;
+        return {
+          ...c,
+          code: c.code || c.clientCode || c.client_code,
+          clientCode: c.clientCode || c.code || c.client_code,
+          companyName: c.companyName || c.clientName || c.client_name,
+          clientName: c.clientName || c.companyName || c.client_name,
+        };
+      }).filter(Boolean);
+
+      const uniqByKey = (arr) => {
+        const seen = new Set();
+        return (arr || []).filter(item => {
+          const key = (item.id ?? item.code ?? item.clientCode ?? '').toString();
+          if (!key) return true;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
+
+      const activeTbbClients = normalizedClients.filter(c => {
+        const ct = (c.clientType || '').toString().toUpperCase();
+        return (c.status === 'Active' || !c.status) && (!ct || ct === 'TBB');
+      });
+      const uniqueTbbClients = uniqByKey(activeTbbClients);
       setTbbClients(uniqueTbbClients);
+
+      const activeSundry = normalizedClients.filter(c => {
+        const ct = (c.clientType || '').toString().toUpperCase();
+        return (c.status === 'Active' || !c.status) && (!ct || ct === 'TBB' || ct === 'CREDIT');
+      });
+      setSundryCreditorClients(uniqByKey(activeSundry));
       setCities(storedCities.filter(c => c.status === 'Active'));
       setVehicles(storedVehicles.filter(v => v.status === 'Active'));
       setBranches(storedBranches.filter(b => b.status === 'Active'));
-      setClientRates(storedClientRates.filter(r => r.status === 'Active'));
+      setClientRates(storedClientRates.filter(r => (r.status === 'Active' || !r.status)));
     }
   };
 
@@ -733,8 +908,8 @@ export default function LRBookingForm() {
       return;
     }
     
-    // Auto-calculate for Paid, ToPay, and TBB payment modes
-    if (formData.paymentMode !== 'Paid' && formData.paymentMode !== 'ToPay' && formData.paymentMode !== 'TBB') {
+    // Auto-calculate for Paid, ToPay, TBB, and SundryCreditor payment modes
+    if (formData.paymentMode !== 'Paid' && formData.paymentMode !== 'ToPay' && formData.paymentMode !== 'TBB' && formData.paymentMode !== 'SundryCreditor') {
       return;
     }
     
@@ -1142,8 +1317,18 @@ export default function LRBookingForm() {
   };
 
   // Function to reset form to blank state with next LR number
-  const resetForm = (generateNextLR = true) => {
-    const nextLRNumber = generateNextLR ? getNextLRNumber() : '';
+  const resetForm = async (generateNextLR = true) => {
+    let nextLRNumber = '';
+    if (generateNextLR) {
+      try {
+        nextLRNumber = await getNextLRNumber();
+      } catch (err) {
+        console.warn('Could not generate next LR number:', err);
+        // Use timestamp as fallback
+        const timestamp = Date.now();
+        nextLRNumber = timestamp.toString().slice(-10).padStart(10, '0');
+      }
+    }
     
     setFormData({
       lrNumber: nextLRNumber,
@@ -1154,6 +1339,7 @@ export default function LRBookingForm() {
       deliveryType: 'Godown',
       bookingDate: '',
       expectedDeliveryDate: '',
+      referenceNumber: '',
       paymentMode: 'Paid',
       tbbClient: '',
       consignor: {
@@ -1238,6 +1424,39 @@ export default function LRBookingForm() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    e.stopPropagation();
+    
+    // Prevent duplicate submissions
+    if (saving) {
+      console.log('Already saving, ignoring duplicate submission');
+      return;
+    }
+    
+    // Check if manual mode is selected but LR series is not assigned
+    if (formData.lrMode === 'manual') {
+      const branchId = formData.branch || (currentUser?.branch ? currentUser.branch.toString() : '');
+      const hasAssignedSeries = lrSeries.some(series => {
+        const mode = series?.bookingMode || 'PTL';
+        return (
+          series?.branchId?.toString() === branchId.toString() &&
+          series?.status === 'Active' &&
+          (mode === 'PTL' || mode === 'Both')
+        );
+      });
+      
+      if (!hasAssignedSeries) {
+        alert('⚠️ Manual LR series not issued\n\nPlease assign LR series from LR Series Master first, or use Auto Generate mode.');
+        return;
+      }
+    }
+    
+    // Basic validation
+    if (!formData.lrNumber || !formData.bookingDate) {
+      alert('❌ Please fill in LR Number and Booking Date');
+      return;
+    }
+    
+    console.log('Starting LR save...', { lrNumber: formData.lrNumber, branch: formData.branch });
     
     const newLR = {
       ...formData,
@@ -1246,19 +1465,55 @@ export default function LRBookingForm() {
       createdAt: new Date().toISOString()
     };
     
+    // Remove id to ensure new record is created (not update)
+    delete newLR.id;
+    
     try {
       setSaving(true);
+      console.log('Saving LR booking to server...', { 
+        lrNumber: newLR.lrNumber,
+        branch: newLR.branch,
+        origin: newLR.origin,
+        destination: newLR.destination
+      });
+      
       // Save to both LRBookings and PTLLRBookings for compatibility
-      await createLRBooking(newLR);
+      console.log('Calling createLRBooking...');
+      const savedLR = await createLRBooking(newLR);
+      console.log('LR booking saved to lrBookings:', savedLR);
+      
+      console.log('Calling createPTLBooking...');
       await createPTLBooking(newLR);
+      console.log('LR booking saved to ptlLRBookings');
       
       // Store saved LR ID and show dialog
-      setLastSavedLRId(newLR.id || Date.now());
+      const savedId = savedLR?.id || savedLR?.data?.id || Date.now();
+      setLastSavedLRId(savedId);
       setShowSaveDialog(true);
-      alert('✅ LR Booking saved to Render.com server!');
+      alert('✅ LR Booking saved successfully!');
     } catch (error) {
-      console.error('Error saving LR booking:', error);
-      alert('❌ Error saving LR booking: ' + error.message);
+      console.error('❌ Error saving LR booking:', error);
+      console.error('Error type:', error?.constructor?.name);
+      console.error('Error message:', error?.message);
+      console.error('Error stack:', error?.stack);
+      console.error('Error response:', error?.response);
+      console.error('Error data:', error?.data);
+      
+      // Get more detailed error message
+      let errorMessage = 'Unknown error';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.status) {
+        errorMessage = `HTTP ${error.status}: ${error.message || 'Server error'}`;
+      } else if (error?.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error?.response?.statusText) {
+        errorMessage = `${error.response.status}: ${error.response.statusText}`;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+      
+      alert('❌ Error saving LR booking: ' + errorMessage + '\n\nCheck browser console for details.');
     } finally {
       setSaving(false);
     }
@@ -1283,8 +1538,10 @@ export default function LRBookingForm() {
       return;
     }
     
-    resetForm(true); // Reset form and generate next LR number
+    // Reset form and generate next LR number
+    resetForm(true).catch(err => console.warn('Error resetting form:', err));
     setLastSavedLRId(null);
+    setSaving(false); // Ensure saving state is reset
   };
 
   return (
@@ -1591,14 +1848,50 @@ export default function LRBookingForm() {
                   <button
                     type="button"
                     className={`toggle-btn ${formData.lrMode === 'auto' ? 'active' : ''}`}
-                    onClick={() => setFormData(prev => ({ ...prev, lrMode: 'auto' }))}
+                    onClick={() => {
+                      const branchId = formData.branch || (currentUser?.branch ? currentUser.branch.toString() : '');
+                      const hasAssignedSeries = branchId && lrSeries.some(series => {
+                        const mode = series?.bookingMode || 'PTL';
+                        return (
+                          series?.branchId?.toString() === branchId.toString() &&
+                          series?.status === 'Active' &&
+                          (mode === 'PTL' || mode === 'Both')
+                        );
+                      });
+                      
+                      // Only allow auto mode if no LR series is assigned
+                      if (hasAssignedSeries) {
+                        alert('⚠️ LR Series is assigned from LR Series Master\n\nPlease use Manual Entry mode to enter LR number from the assigned series.');
+                        return;
+                      }
+                      
+                      setFormData(prev => ({ ...prev, lrMode: 'auto' }));
+                    }}
                   >
                     Auto Generate
                   </button>
                   <button
                     type="button"
                     className={`toggle-btn ${formData.lrMode === 'manual' ? 'active' : ''}`}
-                    onClick={() => setFormData(prev => ({ ...prev, lrMode: 'manual', lrNumber: '' }))}
+                    onClick={() => {
+                      // Check if LR series is assigned for this branch
+                      const branchId = formData.branch || (currentUser?.branch ? currentUser.branch.toString() : '');
+                      const hasAssignedSeries = lrSeries.some(series => {
+                        const mode = series?.bookingMode || 'PTL';
+                        return (
+                          series?.branchId?.toString() === branchId.toString() &&
+                          series?.status === 'Active' &&
+                          (mode === 'PTL' || mode === 'Both')
+                        );
+                      });
+                      
+                      if (!hasAssignedSeries) {
+                        alert('⚠️ Manual LR series not issued\n\nPlease assign LR series from LR Series Master first, or use Auto Generate mode.');
+                        return;
+                      }
+                      
+                      setFormData(prev => ({ ...prev, lrMode: 'manual', lrNumber: '' }));
+                    }}
                   >
                     Manual Entry
                   </button>
@@ -1644,6 +1937,16 @@ export default function LRBookingForm() {
                   required
                 />
               </div>
+              
+              <div className="input-group">
+                <label>Reference Number</label>
+                <input
+                  type="text"
+                  value={formData.referenceNumber || ''}
+                  onChange={(e) => setFormData(prev => ({ ...prev, referenceNumber: e.target.value }))}
+                  placeholder="PO/Order/Ref No (optional)"
+                />
+              </div>
             </div>
 
             <div className="input-group" style={{ marginTop: '16px' }}>
@@ -1670,8 +1973,10 @@ export default function LRBookingForm() {
                       setFormData(prev => ({ ...prev, branch: branchId }));
                     }}
                     required
-                    disabled={!isAdmin && formData.branch !== ''} // Disable if not admin and branch is already selected
-                    style={!isAdmin && formData.branch !== '' ? { background: '#f3f4f6', cursor: 'not-allowed' } : {}}
+                    disabled={(!isAdmin && formData.branch !== '') || (isAdmin && !!localStorage.getItem('adminSelectedBranch'))}
+                    style={((!isAdmin && formData.branch !== '') || (isAdmin && !!localStorage.getItem('adminSelectedBranch')))
+                      ? { background: '#f3f4f6', cursor: 'not-allowed' }
+                      : {}}
                   >
                     <option value="">-- Select Branch --</option>
                     {branches.map(branch => (
@@ -1769,14 +2074,44 @@ export default function LRBookingForm() {
                 <label>Payment Mode</label>
                 <select
                   value={formData.paymentMode}
-                  onChange={(e) => setFormData(prev => ({ ...prev, paymentMode: e.target.value }))}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setFormData(prev => ({
+                      ...prev,
+                      paymentMode: next,
+                      // Sensible defaults for receipt tracking
+                      paymentReceived: next === 'ToPay' ? false : (next === 'Paid' ? true : prev.paymentReceived),
+                      // Clear sundry creditor when not needed
+                      sundryCreditor: (next === 'SundryCreditor') ? prev.sundryCreditor : prev.sundryCreditor
+                    }));
+                  }}
                   required
                 >
                   <option value="Paid">Paid</option>
                   <option value="ToPay">To Pay</option>
                   <option value="TBB">To Be Billed (TBB)</option>
+                  <option value="SundryCreditor">Sundry Creditor (Payment Pending)</option>
                 </select>
               </div>
+
+              {/* Cash/ToPay receipt tracking (Branch Day Book) */}
+              {(formData.paymentMode === 'Paid' || formData.paymentMode === 'ToPay') && (
+                <div className="input-group">
+                  <label>Payment Received in Branch Day Book?</label>
+                  <select
+                    value={formData.paymentReceived ? 'yes' : 'no'}
+                    onChange={(e) => setFormData(prev => ({ ...prev, paymentReceived: e.target.value === 'yes' }))}
+                  >
+                    <option value="yes">Yes (Received)</option>
+                    <option value="no">No (Pending)</option>
+                  </select>
+                  {!formData.paymentReceived && (
+                    <small style={{ display: 'block', marginTop: '6px', color: '#92400e' }}>
+                      This LR is booked as {formData.paymentMode}, but payment is not yet received in Day Book.
+                    </small>
+                  )}
+                </div>
+              )}
               
               {/* Delivery Type - Show for PTL mode (editable) OR when TBB is selected (read-only from Rate Master) */}
               {(formData.bookingMode === 'PTL' || formData.paymentMode === 'TBB') && (
@@ -1948,6 +2283,52 @@ export default function LRBookingForm() {
                   )}
                 </div>
               )}
+
+            {/* Sundry creditor selection for PTL (when payment is pending) */}
+            {(formData.paymentMode === 'SundryCreditor' || ((formData.paymentMode === 'Paid' || formData.paymentMode === 'ToPay') && !formData.paymentReceived)) && (
+              <div className="input-group">
+                <label>Select Sundry Creditor (Payment Pending)</label>
+                {sundryCreditorClients.length === 0 ? (
+                  <div style={{
+                    padding: '16px',
+                    background: '#fef3c7',
+                    borderRadius: '8px',
+                    border: '2px solid #fbbf24',
+                    color: '#92400e'
+                  }}>
+                    <strong>⚠️ No Sundry Creditor Clients Available</strong>
+                    <p style={{ margin: '8px 0 0 0', fontSize: '0.9rem' }}>
+                      Please add TBB/Credit clients in Client Master first.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      value={formData.sundryCreditor}
+                      onChange={(e) => {
+                        const clientId = e.target.value;
+                        const client = sundryCreditorClients.find(c => c.id?.toString() === clientId.toString());
+                        setSelectedSundryCreditor(client || null);
+                        setFormData(prev => ({ ...prev, sundryCreditor: clientId }));
+                      }}
+                      required
+                    >
+                      <option value="">-- Select Sundry Creditor --</option>
+                      {sundryCreditorClients.map(client => (
+                        <option key={client.id} value={client.id}>
+                          {(client.code || client.clientCode || 'N/A')} - {(client.companyName || client.clientName || 'N/A')}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedSundryCreditor && (
+                      <small style={{ display: 'block', marginTop: '6px', color: '#64748b' }}>
+                        Selected: {(selectedSundryCreditor.companyName || selectedSundryCreditor.clientName || 'N/A')}
+                      </small>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Route Details */}
@@ -3149,9 +3530,22 @@ export default function LRBookingForm() {
           )}
 
           <div style={{ textAlign: 'center', marginTop: '30px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
-            <button type="submit" className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '14px 40px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button 
+              type="submit" 
+              className="btn btn-primary" 
+              disabled={saving}
+              style={{ 
+                fontSize: '1.1rem', 
+                padding: '14px 40px', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px',
+                opacity: saving ? 0.6 : 1,
+                cursor: saving ? 'not-allowed' : 'pointer'
+              }}
+            >
               <Printer size={20} />
-              Save & Print LR
+              {saving ? 'Saving...' : 'Save & Print LR'}
             </button>
             {savedLRId && (
               <button 
@@ -3519,11 +3913,12 @@ export default function LRBookingForm() {
         }}>
           <LRPrintView 
             lrId={savedLRId} 
+            lrTable="lrBookings"
             onClose={() => {
               setShowPrintView(false);
               setSavedLRId(null);
               // After closing print view, reset form for next booking
-              resetForm(true);
+              resetForm(true).catch(err => console.warn('Error resetting form:', err));
             }} 
           />
         </div>

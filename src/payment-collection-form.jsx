@@ -1,18 +1,106 @@
 import React, { useState, useEffect } from 'react';
 import { Save, DollarSign, Receipt, FileText, Wallet } from 'lucide-react';
+import syncService from './utils/sync-service';
+import databaseAPI from './utils/database-api';
 
 export default function PaymentCollectionFormEnhanced() {
   const [payments, setPayments] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [lrBookings, setLrBookings] = useState([]);
   const [tbbClients, setTbbClients] = useState([]);
+  const [allClients, setAllClients] = useState([]);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
 
   useEffect(() => {
-    setPayments(JSON.parse(localStorage.getItem('payments') || '[]'));
-    setInvoices(JSON.parse(localStorage.getItem('invoices') || '[]'));
-    setLrBookings(JSON.parse(localStorage.getItem('lrBookings') || '[]'));
-    setTbbClients(JSON.parse(localStorage.getItem('tbbClients') || '[]'));
+    const parseMaybeJson = (value) => {
+      if (value == null) return value;
+      if (typeof value === 'object') return value;
+      if (typeof value !== 'string') return value;
+      const t = value.trim();
+      if (!t) return value;
+      try { return JSON.parse(t); } catch { return value; }
+    };
+
+    const normalizeClient = (c) => {
+      if (!c) return null;
+      const data = parseMaybeJson(c.data);
+      const merged = (data && typeof data === 'object') ? { ...c, ...data } : { ...c };
+      const clientType = (merged.clientType || merged.client_type || 'TBB').toString();
+      return {
+        ...merged,
+        clientType,
+        code: merged.code || merged.clientCode || merged.client_code,
+        clientCode: merged.clientCode || merged.code || merged.client_code,
+        companyName: merged.companyName || merged.clientName || merged.client_name || merged.tradeName,
+        clientName: merged.clientName || merged.companyName || merged.client_name || merged.tradeName,
+      };
+    };
+
+    const normalizeLR = (lr, table) => {
+      if (!lr) return null;
+      const data = parseMaybeJson(lr.data);
+      const merged = (data && typeof data === 'object') ? { ...lr, ...data } : { ...lr };
+      return {
+        ...merged,
+        __table: table,
+        __key: `${table}:${lr.id}`,
+        consignor: typeof merged.consignor === 'string' ? parseMaybeJson(merged.consignor) : (merged.consignor || {}),
+        consignee: typeof merged.consignee === 'string' ? parseMaybeJson(merged.consignee) : (merged.consignee || {}),
+        charges: typeof merged.charges === 'string' ? parseMaybeJson(merged.charges) : (merged.charges || {}),
+      };
+    };
+
+    const loadAll = async () => {
+      // Payments from server (shared)
+      const paymentsRes = await syncService.load('payments').catch(() => ({ data: [] }));
+      const paymentsData = Array.isArray(paymentsRes) ? paymentsRes : (paymentsRes?.data || []);
+      const normalizedPayments = (paymentsData || []).map(p => {
+        const d = parseMaybeJson(p?.data);
+        const merged = (d && typeof d === 'object') ? { ...p, ...d } : { ...p };
+        return {
+          ...merged,
+          receiptNumber: merged.receiptNumber || p.paymentNumber || '',
+          receiptDate: merged.receiptDate || p.paymentDate || '',
+          paymentType: merged.paymentType || 'Invoice',
+        };
+      });
+      setPayments(normalizedPayments);
+
+      // Invoices: try server first, fallback to localStorage (Billing form may still be local)
+      const invoicesRes = await syncService.load('invoices').catch(() => ({ data: [] }));
+      const serverInvoices = Array.isArray(invoicesRes) ? invoicesRes : (invoicesRes?.data || []);
+      const localInvoices = (() => {
+        try { return JSON.parse(localStorage.getItem('invoices') || '[]'); } catch { return []; }
+      })();
+      const invoiceMap = new Map();
+      [...localInvoices, ...(serverInvoices || [])].forEach(inv => {
+        if (!inv) return;
+        const key = (inv.id ?? inv.invoiceNumber ?? '').toString();
+        if (!key) return;
+        invoiceMap.set(key, inv);
+      });
+      setInvoices(Array.from(invoiceMap.values()));
+
+      // Clients from server so Cash/ToPay clients created during booking are visible everywhere
+      const clientsRes = await syncService.load('clients').catch(() => ({ data: [] }));
+      const rawClients = Array.isArray(clientsRes) ? clientsRes : (clientsRes?.data || []);
+      const normalized = (rawClients || []).map(normalizeClient).filter(Boolean).filter(c => (c.status === 'Active' || !c.status));
+      setAllClients(normalized);
+      setTbbClients((normalized || []).filter(c => (c.clientType || '').toString().toUpperCase() === 'TBB'));
+
+      // LRs from server (all tables)
+      const [baseRes, ptlRes, ftlRes] = await Promise.all([
+        syncService.load('lrBookings').catch(() => ({ data: [] })),
+        syncService.load('ptlLRBookings').catch(() => ({ data: [] })),
+        syncService.load('ftlLRBookings').catch(() => ({ data: [] })),
+      ]);
+      const base = (Array.isArray(baseRes) ? baseRes : (baseRes?.data || [])).map(r => normalizeLR(r, 'lrBookings')).filter(Boolean);
+      const ptl = (Array.isArray(ptlRes) ? ptlRes : (ptlRes?.data || [])).map(r => normalizeLR(r, 'ptlLRBookings')).filter(Boolean);
+      const ftl = (Array.isArray(ftlRes) ? ftlRes : (ftlRes?.data || [])).map(r => normalizeLR(r, 'ftlLRBookings')).filter(Boolean);
+      setLrBookings([...(base || []), ...(ptl || []), ...(ftl || [])]);
+    };
+
+    loadAll();
   }, []);
 
   const [formData, setFormData] = useState({
@@ -36,7 +124,7 @@ export default function PaymentCollectionFormEnhanced() {
 
   // Auto-generate Receipt Number
   useEffect(() => {
-    const receiptNo = `RCP${String(payments.length + 1).padStart(6, '0')}`;
+    const receiptNo = `RCP${String((payments?.length || 0) + 1).padStart(6, '0')}`;
     setFormData(prev => ({ ...prev, receiptNumber: receiptNo }));
   }, [payments.length]);
 
@@ -52,40 +140,131 @@ export default function PaymentCollectionFormEnhanced() {
         }));
       }
     } else if (formData.paymentType === 'LR' && formData.lrNumber) {
-      const lr = lrBookings.find(l => l.id.toString() === formData.lrNumber);
+      const lr = lrBookings.find(l => l.__key?.toString() === formData.lrNumber?.toString());
       if (lr) {
-        const client = lr.paymentMode === 'TBB' ? lr.tbbClient : lr.consignor.name;
+        let clientLabel = '';
+        if (lr.paymentMode === 'TBB' && lr.tbbClient) {
+          const c = allClients.find(x => x.id?.toString() === lr.tbbClient?.toString());
+          clientLabel = c ? (c.companyName || c.clientName || '') : '';
+        } else {
+          clientLabel = lr.cashToPayClientName || lr.customerClientName || lr.consignor?.name || '';
+        }
         setFormData(prev => ({
           ...prev,
-          clientName: client,
-          amount: lr.totalAmount
+          clientName: clientLabel,
+          amount: lr.totalAmount || lr.charges?.grandTotal || ''
         }));
       }
     } else if (formData.paymentType === 'OnAccount' && formData.clientId) {
-      const client = tbbClients.find(c => c.id.toString() === formData.clientId);
+      const client = allClients.find(c => c.id?.toString() === formData.clientId?.toString());
       if (client) {
         setFormData(prev => ({
           ...prev,
-          clientName: client.companyName
+          clientName: client.companyName || client.clientName || ''
         }));
       }
     }
-  }, [formData.paymentType, formData.invoiceNumber, formData.lrNumber, formData.clientId, invoices, lrBookings, tbbClients]);
+  }, [formData.paymentType, formData.invoiceNumber, formData.lrNumber, formData.clientId, invoices, lrBookings, allClients]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    const existingPayments = JSON.parse(localStorage.getItem('payments') || '[]');
-    
-    const newPayment = {
-      id: Date.now(),
-      ...formData,
-      createdAt: new Date().toISOString()
+
+    // Map UI fields → DB fields
+    const paymentNumber = formData.receiptNumber;
+    const paymentDate = formData.receiptDate;
+    const amount = String(formData.amount || '');
+
+    let invoiceNumbers = '';
+    let lrMeta = null;
+    if (formData.paymentType === 'Invoice' && formData.invoiceNumber) {
+      const inv = invoices.find(i => i.id?.toString() === formData.invoiceNumber?.toString());
+      invoiceNumbers = inv?.invoiceNumber || '';
+    }
+    if (formData.paymentType === 'LR' && formData.lrNumber) {
+      lrMeta = lrBookings.find(l => l.__key?.toString() === formData.lrNumber?.toString()) || null;
+      invoiceNumbers = lrMeta?.lrNumber || '';
+    }
+
+    const paymentPayload = {
+      paymentNumber,
+      paymentDate,
+      clientId: formData.clientId || '',
+      clientName: formData.clientName || '',
+      amount,
+      paymentMode: formData.paymentMode || '',
+      invoiceNumbers,
+      data: {
+        ...formData,
+        paymentType: formData.paymentType,
+        lrKey: formData.paymentType === 'LR' ? formData.lrNumber : '',
+        lrTable: lrMeta?.__table || '',
+        lrId: lrMeta?.id || '',
+        lrNumber: lrMeta?.lrNumber || '',
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
-    existingPayments.push(newPayment);
-    localStorage.setItem('payments', JSON.stringify(existingPayments));
-    setPayments(existingPayments);
+    const saved = await syncService.save('payments', paymentPayload, false, null);
+    if (!saved?.success) {
+      alert(`❌ Failed to save payment.\n\n${saved?.error || 'Unknown error'}`);
+      return;
+    }
+
+    // If this is an LR payment, also update that LR record so advance/payment is stored against it.
+    if (formData.paymentType === 'LR' && lrMeta?.__table && lrMeta?.id) {
+      try {
+        const row = await databaseAPI.getById(lrMeta.__table, lrMeta.id);
+        const parsedData = (() => {
+          if (!row?.data) return {};
+          if (typeof row.data === 'object') return row.data;
+          try { return JSON.parse(row.data); } catch { return {}; }
+        })();
+        const existingPayments = Array.isArray(parsedData.receivedPayments) ? parsedData.receivedPayments : [];
+        const newEntry = {
+          paymentNumber,
+          paymentDate,
+          amount: parseFloat(amount) || 0,
+          paymentMode: formData.paymentMode || '',
+          remarks: formData.remarks || '',
+          createdAt: new Date().toISOString(),
+        };
+        const updatedPayments = [...existingPayments, newEntry];
+        const paidTotal = updatedPayments.reduce((s, p) => s + (parseFloat(p?.amount) || 0), 0);
+        const lrTotal = parseFloat(lrMeta.totalAmount || row.totalAmount || 0) || 0;
+        const balance = Math.max(0, lrTotal - paidTotal);
+
+        const nextData = {
+          ...parsedData,
+          receivedPayments: updatedPayments,
+          paidAmount: paidTotal,
+          balanceAmount: balance,
+          paymentReceived: balance <= 0 ? true : (parsedData.paymentReceived ?? false),
+        };
+        await databaseAPI.update(lrMeta.__table, lrMeta.id, { data: nextData });
+      } catch (err) {
+        console.error('Failed updating LR with payment info:', err);
+      }
+    }
+
+    // Reload payments list from server (so it shows on other systems too)
+    const paymentsRes = await syncService.load('payments', true).catch(() => ({ data: [] }));
+    const paymentsData = Array.isArray(paymentsRes) ? paymentsRes : (paymentsRes?.data || []);
+    const normalizedPayments = (paymentsData || []).map(p => {
+      const d = (() => {
+        if (!p?.data) return null;
+        if (typeof p.data === 'object') return p.data;
+        try { return JSON.parse(p.data); } catch { return null; }
+      })();
+      const merged = (d && typeof d === 'object') ? { ...p, ...d } : { ...p };
+      return {
+        ...merged,
+        receiptNumber: merged.receiptNumber || p.paymentNumber || '',
+        receiptDate: merged.receiptDate || p.paymentDate || '',
+        paymentType: merged.paymentType || 'Invoice',
+      };
+    });
+    setPayments(normalizedPayments);
 
     // Update invoice status if payment is for invoice
     if (formData.paymentType === 'Invoice' && formData.invoiceNumber) {
@@ -93,8 +272,8 @@ export default function PaymentCollectionFormEnhanced() {
       const invoice = invoicesList.find(inv => inv.id.toString() === formData.invoiceNumber);
       
       if (invoice) {
-        const previousPayments = existingPayments
-          .filter(p => p.invoiceNumber === formData.invoiceNumber && p.id !== newPayment.id)
+        const previousPayments = (paymentsData || [])
+          .filter(p => (p?.data && (typeof p.data === 'string' ? p.data.includes(`\"invoiceNumber\":\"${formData.invoiceNumber}\"`) : (p.data.invoiceNumber === formData.invoiceNumber))) )
           .reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
         
         const totalPaid = previousPayments + parseFloat(formData.amount);
@@ -122,7 +301,7 @@ export default function PaymentCollectionFormEnhanced() {
 
     // Reset form but KEEP IT OPEN
     setFormData({
-      receiptNumber: `RCP${String(existingPayments.length + 1).padStart(6, '0')}`,
+      receiptNumber: `RCP${String((paymentsData?.length || 0) + 1).padStart(6, '0')}`,
       receiptDate: new Date().toISOString().split('T')[0],
       paymentType: 'Invoice',
       invoiceNumber: '',
@@ -160,8 +339,9 @@ export default function PaymentCollectionFormEnhanced() {
   };
 
   const getLRDetails = (lrId) => {
-    const lr = lrBookings.find(l => l.id.toString() === lrId);
-    return lr ? `${lr.lrNumber} | ${lr.consignee.name} | Amount: ₹${lr.totalAmount}` : '';
+    const lr = lrBookings.find(l => l.__key?.toString() === lrId?.toString());
+    const mode = lr?.__table === 'ftlLRBookings' ? 'FTL' : (lr?.__table === 'ptlLRBookings' ? 'PTL' : 'PTL');
+    return lr ? `${lr.lrNumber} | ${mode} | ${lr.consignee?.name || ''} | Amount: ₹${lr.totalAmount || 0}` : '';
   };
 
   return (
@@ -493,8 +673,8 @@ export default function PaymentCollectionFormEnhanced() {
                 >
                   <option value="">-- Select LR --</option>
                   {lrBookings.map(lr => (
-                    <option key={lr.id} value={lr.id}>
-                      {getLRDetails(lr.id)}
+                    <option key={lr.__key || lr.id} value={lr.__key || lr.id}>
+                      {getLRDetails(lr.__key || lr.id)}
                     </option>
                   ))}
                 </select>
@@ -513,9 +693,9 @@ export default function PaymentCollectionFormEnhanced() {
                     autoFocus
                   >
                     <option value="">-- Select Client --</option>
-                    {tbbClients.map(client => (
+                    {allClients.map(client => (
                       <option key={client.id} value={client.id}>
-                        {client.companyName} | GST: {client.gstNumber}
+                        {(client.companyName || client.clientName)} | {(client.clientType || '').toString().toUpperCase()}
                       </option>
                     ))}
                   </select>
@@ -762,7 +942,7 @@ export default function PaymentCollectionFormEnhanced() {
                       payment.paymentType === 'Invoice' 
                         ? invoices.find(inv => inv.id.toString() === payment.invoiceNumber)?.invoiceNumber 
                         : payment.paymentType === 'LR'
-                        ? lrBookings.find(lr => lr.id.toString() === payment.lrNumber)?.lrNumber
+                        ? (payment.lrNumber || payment.invoiceNumbers || '')
                         : 'Advance'
                     }
                   </div>

@@ -1,15 +1,52 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Users } from 'lucide-react';
+import { Save, Users, Edit2, Trash2, Ban, CheckCircle, Search, X, Plus } from 'lucide-react';
+import { apiService } from './utils/apiService';
 
 export default function StaffMasterForm() {
   const [branches, setBranches] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('create'); // 'create' or 'view'
+  const [editingStaffId, setEditingStaffId] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   
-  // Load branches from localStorage
+  // Load branches from API
   useEffect(() => {
-    const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const activeBranches = storedBranches.filter(b => b.status === 'Active');
-    setBranches(activeBranches);
+    const loadBranches = async () => {
+      try {
+        const result = await apiService.getBranches();
+        const branchesData = result?.data || result || [];
+        // Filter active branches and clean branch names
+        const activeBranches = branchesData
+          .filter(b => b.status === 'Active' || !b.status || b.status === undefined)
+          .map(branch => ({
+            ...branch,
+            branchName: branch.branchName ? branch.branchName.trim().replace(/0+$/, '').trim() : branch.branchName
+          }));
+        setBranches(activeBranches);
+      } catch (error) {
+        console.error('Error loading branches:', error);
+        setBranches([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadBranches();
+    loadStaff();
   }, []);
+
+  const loadStaff = async () => {
+    try {
+      const result = await apiService.getStaff();
+      const staffData = result?.data || result || [];
+      setStaff(staffData);
+    } catch (error) {
+      console.error('Error loading staff:', error);
+      setStaff([]);
+    }
+  };
 
   const [formData, setFormData] = useState({
     staffCode: '',
@@ -71,31 +108,161 @@ export default function StaffMasterForm() {
     'Others'
   ];
 
-  const handleSubmit = (e) => {
+  const resetForm = () => {
+    setFormData({
+      staffCode: '',
+      staffName: '',
+      fatherName: '',
+      dateOfBirth: '',
+      bloodGroup: '',
+      branch: '',
+      designation: '',
+      department: '',
+      contactDetails: {
+        mobile: '',
+        alternateMobile: '',
+        email: '',
+        emergencyContact: '',
+        emergencyContactName: ''
+      },
+      address: {
+        currentAddress: '',
+        permanentAddress: '',
+        city: '',
+        state: '',
+        pincode: ''
+      },
+      aadharNumber: '',
+      panNumber: '',
+      bankDetails: {
+        accountName: '',
+        accountNumber: '',
+        bankName: '',
+        branch: '',
+        ifscCode: ''
+      },
+      salaryType: 'Monthly',
+      salaryDetails: {
+        monthlySalary: '',
+        dailyWages: ''
+      },
+      joiningDate: '',
+      status: 'Active',
+      remarks: ''
+    });
+    setEditingStaffId(null);
+  };
+
+  const handleEdit = (staffMember) => {
+    setFormData({
+      ...staffMember,
+      contactDetails: typeof staffMember.contactDetails === 'string' 
+        ? JSON.parse(staffMember.contactDetails || '{}') 
+        : (staffMember.contactDetails || {}),
+      address: typeof staffMember.address === 'string' 
+        ? JSON.parse(staffMember.address || '{}') 
+        : (staffMember.address || {}),
+      bankDetails: typeof staffMember.bankDetails === 'string' 
+        ? JSON.parse(staffMember.bankDetails || '{}') 
+        : (staffMember.bankDetails || {}),
+      salaryDetails: typeof staffMember.salaryDetails === 'string' 
+        ? JSON.parse(staffMember.salaryDetails || '{}') 
+        : (staffMember.salaryDetails || {})
+    });
+    setEditingStaffId(staffMember.id);
+    setActiveTab('create');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleDelete = async (id) => {
+    if (window.confirm('⚠️ Are you sure you want to delete this staff member?\n\nThis action cannot be undone!')) {
+      try {
+        await apiService.deleteStaff(id);
+        alert('✅ Staff member deleted successfully!');
+        loadStaff();
+      } catch (error) {
+        console.error('Error deleting staff:', error);
+        alert('❌ Error deleting staff member: ' + (error.message || 'Unknown error'));
+      }
+    }
+  };
+
+  const handleSuspend = async (id) => {
+    if (window.confirm('⚠️ Are you sure you want to suspend this staff member?')) {
+      try {
+        const staffMember = staff.find(s => s.id === id);
+        if (staffMember) {
+          await apiService.updateStaff(id, { ...staffMember, status: 'Suspended' });
+          alert('✅ Staff member suspended successfully!');
+          loadStaff();
+        }
+      } catch (error) {
+        console.error('Error suspending staff:', error);
+        alert('❌ Error suspending staff member: ' + (error.message || 'Unknown error'));
+      }
+    }
+  };
+
+  const handleActivate = async (id) => {
+    try {
+      const staffMember = staff.find(s => s.id === id);
+      if (staffMember) {
+        await apiService.updateStaff(id, { ...staffMember, status: 'Active' });
+        alert('✅ Staff member activated successfully!');
+        loadStaff();
+      }
+    } catch (error) {
+      console.error('Error activating staff:', error);
+      alert('❌ Error activating staff member: ' + (error.message || 'Unknown error'));
+    }
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
-    const existingStaff = JSON.parse(localStorage.getItem('staff') || '[]');
-    
-    const newStaff = {
-      id: Date.now(),
-      code: formData.staffCode || `STF${String(existingStaff.length + 1).padStart(3, '0')}`,
-      ...formData,
-      createdAt: new Date().toISOString()
-    };
-    
-    existingStaff.push(newStaff);
-    localStorage.setItem('staff', JSON.stringify(existingStaff));
-    
-    const salaryInfo = formData.salaryType === 'Monthly' 
-      ? `Monthly Salary: ₹${formData.salaryDetails.monthlySalary}`
-      : `Daily Wages: ₹${formData.salaryDetails.dailyWages}`;
-    
-    const selectedBranch = branches.find(b => b.id.toString() === formData.branch);
-    const branchInfo = selectedBranch ? `\nBranch: ${selectedBranch.branchName} (${selectedBranch.address.city})` : '';
-    
-    alert(`Staff "${formData.staffName}" onboarded successfully!\n\nStaff Code: ${newStaff.code}\nDepartment: ${formData.department}${branchInfo}\n${salaryInfo}`);
-    window.location.reload();
+    try {
+      const staffData = {
+        ...formData,
+        contactDetails: JSON.stringify(formData.contactDetails),
+        address: JSON.stringify(formData.address),
+        bankDetails: JSON.stringify(formData.bankDetails),
+        salaryDetails: JSON.stringify(formData.salaryDetails),
+        staffCode: formData.staffCode || `STF${String(staff.length + 1).padStart(3, '0')}`,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (editingStaffId) {
+        // Update existing staff
+        await apiService.updateStaff(editingStaffId, staffData);
+        alert('✅ Staff member updated successfully!');
+      } else {
+        // Create new staff
+        staffData.createdAt = new Date().toISOString();
+        await apiService.createStaff(staffData);
+        alert('✅ Staff member created successfully!');
+      }
+
+      resetForm();
+      loadStaff();
+      setActiveTab('view');
+    } catch (error) {
+      console.error('Error saving staff:', error);
+      alert('❌ Error saving staff: ' + (error.message || 'Unknown error'));
+    }
   };
+
+  // Filter staff
+  const filteredStaff = staff.filter(s => {
+    const matchesSearch = !searchTerm || 
+      s.staffName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      s.staffCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      s.designation?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      s.department?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = statusFilter === 'all' || s.status === statusFilter;
+    
+    return matchesSearch && matchesStatus;
+  });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-pink-50 to-slate-100 p-6">
@@ -187,9 +354,24 @@ export default function StaffMasterForm() {
           color: white;
         }
         
-        .btn-primary:hover {
+        .btn-secondary {
+          background: #64748b;
+          color: white;
+        }
+        
+        .btn-success {
+          background: #10b981;
+          color: white;
+        }
+        
+        .btn-danger {
+          background: #ef4444;
+          color: white;
+        }
+        
+        .btn-primary:hover, .btn-secondary:hover, .btn-success:hover, .btn-danger:hover {
           transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(236,72,153,0.3);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         }
         
         .toggle-group {
@@ -249,7 +431,61 @@ export default function StaffMasterForm() {
           <p className="text-slate-600 text-lg">Staff Onboarding & Management System</p>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        {/* Tabs */}
+        <div style={{ 
+          display: 'flex', 
+          gap: '8px', 
+          marginBottom: '24px',
+          borderBottom: '2px solid #e2e8f0',
+          paddingBottom: '0'
+        }}>
+          <button
+            type="button"
+            onClick={() => { setActiveTab('create'); resetForm(); }}
+            style={{
+              padding: '12px 24px',
+              border: 'none',
+              background: 'transparent',
+              borderBottom: activeTab === 'create' ? '3px solid #ec4899' : '3px solid transparent',
+              color: activeTab === 'create' ? '#ec4899' : '#64748b',
+              fontWeight: activeTab === 'create' ? 600 : 500,
+              cursor: 'pointer',
+              fontSize: '1rem',
+              transition: 'all 0.2s ease',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <Plus size={18} />
+            {editingStaffId ? 'Edit Staff' : 'Add Staff'}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setActiveTab('view'); loadStaff(); }}
+            style={{
+              padding: '12px 24px',
+              border: 'none',
+              background: 'transparent',
+              borderBottom: activeTab === 'view' ? '3px solid #ec4899' : '3px solid transparent',
+              color: activeTab === 'view' ? '#ec4899' : '#64748b',
+              fontWeight: activeTab === 'view' ? 600 : 500,
+              cursor: 'pointer',
+              fontSize: '1rem',
+              transition: 'all 0.2s ease',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <Users size={18} />
+            View Staff ({staff.length})
+          </button>
+        </div>
+
+        {/* Create/Edit Form */}
+        {activeTab === 'create' && (
+          <form onSubmit={handleSubmit}>
           {/* Basic Information */}
           <div className="form-section">
             <h2 className="section-title">Basic Information</h2>
@@ -292,12 +528,11 @@ export default function StaffMasterForm() {
 
             <div className="grid-4">
               <div className="input-group">
-                <label>Date of Birth *</label>
+                <label>Date of Birth</label>
                 <input
                   type="date"
                   value={formData.dateOfBirth}
                   onChange={(e) => setFormData(prev => ({ ...prev, dateOfBirth: e.target.value }))}
-                  required
                 />
               </div>
               
@@ -316,7 +551,11 @@ export default function StaffMasterForm() {
               
               <div className="input-group">
                 <label>Branch *</label>
-                {branches.length === 0 ? (
+                {loading ? (
+                  <select disabled style={{ background: '#f8fafc' }}>
+                    <option>Loading branches...</option>
+                  </select>
+                ) : branches.length === 0 ? (
                   <div style={{
                     padding: '10px',
                     background: '#fef3c7',
@@ -336,7 +575,7 @@ export default function StaffMasterForm() {
                     <option value="">-- Select Branch --</option>
                     {branches.map(branch => (
                       <option key={branch.id} value={branch.id}>
-                        {branch.branchName} ({branch.address.city})
+                        {branch.branchName || 'Unnamed Branch'} {branch.address?.city ? `(${branch.address.city})` : branch.branchCode ? `(${branch.branchCode})` : ''}
                       </option>
                     ))}
                   </select>
@@ -470,36 +709,34 @@ export default function StaffMasterForm() {
             <h2 className="section-title">Address Details</h2>
             
             <div className="input-group">
-              <label>Current Address *</label>
+              <label>Current Address</label>
               <textarea
                 value={formData.address.currentAddress}
                 onChange={(e) => setFormData(prev => ({
                   ...prev,
                   address: { ...prev.address, currentAddress: e.target.value }
                 }))}
-                placeholder="Complete current address"
+                placeholder="Complete current address (optional)"
                 rows="2"
-                required
               />
             </div>
             
             <div className="input-group">
-              <label>Permanent Address *</label>
+              <label>Permanent Address</label>
               <textarea
                 value={formData.address.permanentAddress}
                 onChange={(e) => setFormData(prev => ({
                   ...prev,
                   address: { ...prev.address, permanentAddress: e.target.value }
                 }))}
-                placeholder="Complete permanent address"
+                placeholder="Complete permanent address (optional)"
                 rows="2"
-                required
               />
             </div>
             
             <div className="grid-3">
               <div className="input-group">
-                <label>City *</label>
+                <label>City</label>
                 <input
                   type="text"
                   value={formData.address.city}
@@ -507,12 +744,12 @@ export default function StaffMasterForm() {
                     ...prev,
                     address: { ...prev.address, city: e.target.value }
                   }))}
-                  required
+                  placeholder="City (optional)"
                 />
               </div>
               
               <div className="input-group">
-                <label>State *</label>
+                <label>State</label>
                 <input
                   type="text"
                   value={formData.address.state}
@@ -520,12 +757,12 @@ export default function StaffMasterForm() {
                     ...prev,
                     address: { ...prev.address, state: e.target.value }
                   }))}
-                  required
+                  placeholder="State (optional)"
                 />
               </div>
               
               <div className="input-group">
-                <label>Pincode *</label>
+                <label>Pincode</label>
                 <input
                   type="text"
                   value={formData.address.pincode}
@@ -533,9 +770,9 @@ export default function StaffMasterForm() {
                     ...prev,
                     address: { ...prev.address, pincode: e.target.value }
                   }))}
+                  placeholder="6 digits (optional)"
                   maxLength="6"
                   pattern="[0-9]{6}"
-                  required
                 />
               </div>
             </div>
@@ -547,16 +784,15 @@ export default function StaffMasterForm() {
             
             <div className="grid-2">
               <div className="input-group">
-                <label>Aadhar Number *</label>
+                <label>Aadhar Number</label>
                 <input
                   type="text"
                   className="mono"
                   value={formData.aadharNumber}
                   onChange={(e) => setFormData(prev => ({ ...prev, aadharNumber: e.target.value }))}
-                  placeholder="12 digits"
+                  placeholder="12 digits (optional)"
                   maxLength="12"
                   pattern="[0-9]{12}"
-                  required
                 />
               </div>
               
@@ -701,7 +937,7 @@ export default function StaffMasterForm() {
               
               {formData.salaryType === 'Monthly' ? (
                 <div className="input-group">
-                  <label>Monthly Salary (₹) *</label>
+                  <label>Monthly Salary (₹)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -710,14 +946,13 @@ export default function StaffMasterForm() {
                       ...prev,
                       salaryDetails: { ...prev.salaryDetails, monthlySalary: e.target.value }
                     }))}
-                    placeholder="Monthly salary amount"
+                    placeholder="Monthly salary amount (optional)"
                     min="0"
-                    required
                   />
                 </div>
               ) : (
                 <div className="input-group">
-                  <label>Daily Wages (₹) *</label>
+                  <label>Daily Wages (₹)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -726,9 +961,8 @@ export default function StaffMasterForm() {
                       ...prev,
                       salaryDetails: { ...prev.salaryDetails, dailyWages: e.target.value }
                     }))}
-                    placeholder="Daily wages amount"
+                    placeholder="Daily wages amount (optional)"
                     min="0"
-                    required
                   />
                 </div>
               )}
@@ -751,12 +985,225 @@ export default function StaffMasterForm() {
           </div>
 
           {/* Submit Button */}
-          <div style={{ textAlign: 'center', marginTop: '30px' }}>
+          <div style={{ textAlign: 'center', marginTop: '30px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
             <button type="submit" className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '14px 40px' }}>
-              <Save size={20} /> Save Staff Master
+              <Save size={20} /> {editingStaffId ? 'Update Staff' : 'Save Staff'}
             </button>
+            {editingStaffId && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { resetForm(); setActiveTab('view'); }}
+                style={{ fontSize: '1.1rem', padding: '14px 40px' }}
+              >
+                Cancel
+              </button>
+            )}
           </div>
         </form>
+        )}
+
+        {/* View Staff List */}
+        {activeTab === 'view' && (
+          <div className="form-section">
+            <h2 className="section-title">Staff List</h2>
+            
+            {/* Search and Filter */}
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '20px' }}>
+              <div className="input-group" style={{ marginBottom: 0 }}>
+                <label>Search Staff</label>
+                <div style={{ position: 'relative' }}>
+                  <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Search by name, code, designation, department..."
+                    style={{ paddingLeft: '40px' }}
+                  />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      style={{
+                        position: 'absolute',
+                        right: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: '#64748b'
+                      }}
+                    >
+                      <X size={18} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              <div className="input-group" style={{ marginBottom: 0 }}>
+                <label>Filter by Status</label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="all">All Status</option>
+                  <option value="Active">Active</option>
+                  <option value="On Leave">On Leave</option>
+                  <option value="Suspended">Suspended</option>
+                  <option value="Resigned">Resigned</option>
+                  <option value="Terminated">Terminated</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Staff List */}
+            {filteredStaff.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: '#64748b' }}>
+                <Users size={64} style={{ marginBottom: '16px', opacity: 0.3 }} />
+                <h3 style={{ marginBottom: '8px' }}>No Staff Found</h3>
+                <p>Create your first staff member to get started.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '16px' }}>
+                {filteredStaff.map(staffMember => {
+                  const staffBranch = branches.find(b => b.id?.toString() === staffMember.branch?.toString());
+                  const contactDetails = typeof staffMember.contactDetails === 'string' 
+                    ? JSON.parse(staffMember.contactDetails || '{}') 
+                    : (staffMember.contactDetails || {});
+                  const salaryDetails = typeof staffMember.salaryDetails === 'string' 
+                    ? JSON.parse(staffMember.salaryDetails || '{}') 
+                    : (staffMember.salaryDetails || {});
+                  
+                  return (
+                    <div key={staffMember.id} style={{
+                      background: 'white',
+                      border: '2px solid #e2e8f0',
+                      borderRadius: '12px',
+                      padding: '20px',
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = '#ec4899';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(236,72,153,0.1)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = '#e2e8f0';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+                            <h3 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#1e293b' }}>
+                              {staffMember.staffName || 'Unnamed Staff'}
+                            </h3>
+                            <span style={{
+                              display: 'inline-block',
+                              padding: '4px 12px',
+                              borderRadius: '6px',
+                              fontSize: '0.75rem',
+                              fontWeight: '600',
+                              background: staffMember.status === 'Active' ? '#d1fae5' : 
+                                         staffMember.status === 'Suspended' ? '#fee2e2' :
+                                         staffMember.status === 'On Leave' ? '#fef3c7' : '#e2e8f0',
+                              color: staffMember.status === 'Active' ? '#065f46' :
+                                    staffMember.status === 'Suspended' ? '#991b1b' :
+                                    staffMember.status === 'On Leave' ? '#92400e' : '#475569'
+                            }}>
+                              {staffMember.status || 'Active'}
+                            </span>
+                          </div>
+                          <p style={{ color: '#64748b', fontSize: '0.9rem' }}>
+                            Code: <span className="mono">{staffMember.staffCode || staffMember.code || 'N/A'}</span> | 
+                            {staffMember.designation && ` ${staffMember.designation}`} | 
+                            {staffMember.department && ` ${staffMember.department}`}
+                            {staffBranch && ` | Branch: ${staffBranch.branchName || 'N/A'}`}
+                          </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => handleEdit(staffMember)}
+                            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                          >
+                            <Edit2 size={16} /> Edit
+                          </button>
+                          {staffMember.status === 'Active' ? (
+                            <button
+                              className="btn"
+                              onClick={() => handleSuspend(staffMember.id)}
+                              style={{ 
+                                padding: '8px 16px', 
+                                fontSize: '0.85rem',
+                                background: '#f59e0b',
+                                color: 'white'
+                              }}
+                            >
+                              <Ban size={16} /> Suspend
+                            </button>
+                          ) : (
+                            <button
+                              className="btn btn-success"
+                              onClick={() => handleActivate(staffMember.id)}
+                              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                            >
+                              <CheckCircle size={16} /> Activate
+                            </button>
+                          )}
+                          <button
+                            className="btn btn-danger"
+                            onClick={() => handleDelete(staffMember.id)}
+                            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                          >
+                            <Trash2 size={16} /> Delete
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                        gap: '12px',
+                        paddingTop: '12px',
+                        borderTop: '1px solid #e2e8f0'
+                      }}>
+                        {contactDetails.mobile && (
+                          <div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '4px' }}>Mobile</div>
+                            <div style={{ fontSize: '0.9rem', fontWeight: '500' }}>{contactDetails.mobile}</div>
+                          </div>
+                        )}
+                        {contactDetails.email && (
+                          <div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '4px' }}>Email</div>
+                            <div style={{ fontSize: '0.9rem', fontWeight: '500' }}>{contactDetails.email}</div>
+                          </div>
+                        )}
+                        {staffMember.joiningDate && (
+                          <div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '4px' }}>Joining Date</div>
+                            <div style={{ fontSize: '0.9rem', fontWeight: '500' }}>{staffMember.joiningDate}</div>
+                          </div>
+                        )}
+                        {(salaryDetails.monthlySalary || salaryDetails.dailyWages) && (
+                          <div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '4px' }}>Salary</div>
+                            <div style={{ fontSize: '0.9rem', fontWeight: '500' }}>
+                              {salaryDetails.monthlySalary ? `₹${salaryDetails.monthlySalary}/month` : 
+                               salaryDetails.dailyWages ? `₹${salaryDetails.dailyWages}/day` : 'Not set'}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

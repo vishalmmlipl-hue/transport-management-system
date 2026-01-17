@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Save, Plus, Trash2, Printer, Truck, User, Search, X, Edit2 } from 'lucide-react';
 
 export default function ManifestForm() {
@@ -38,80 +38,126 @@ export default function ManifestForm() {
   const [editingManifestId, setEditingManifestId] = useState(null);
   
   // Load data from server
+  const loadData = async () => {
+    try {
+      // Import syncService
+      const syncService = (await import('./utils/sync-service')).default;
+      
+      // Load from server
+      const [ftlResult, ptlResult, vehiclesResult, driversResult, branchesResult, citiesResult, manifestsResult, tripsResult, vendorsResult] = await Promise.all([
+        syncService.load('ftlLRBookings'),
+        syncService.load('ptlLRBookings'),
+        syncService.load('vehicles'),
+        syncService.load('drivers'),
+        syncService.load('branches'),
+        syncService.load('cities'),
+        syncService.load('manifests'),
+        syncService.load('trips'),
+        syncService.load('marketVehicleVendors')
+      ]);
+      
+      // Combine LR sources
+      const storedLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+      const allLRs = [...(ftlResult.data || []), ...(ptlResult.data || []), ...storedLRs];
+      const uniqueLRs = allLRs.filter((lr, index, self) => 
+        index === self.findIndex(t => t.id?.toString() === lr.id?.toString())
+      );
+      
+      setLrBookings(uniqueLRs);
+      setVehicles((vehiclesResult.data || []).filter(v => v.status === 'Active'));
+      setDrivers((driversResult.data || []).filter(d => d.status === 'Active'));
+      setBranches((branchesResult.data || []).filter(b => b.status === 'Active'));
+      setCities(citiesResult.data || []);
+      
+      // Handle manifests - ensure we get array and parse selectedLRs
+      const allManifests = Array.isArray(manifestsResult) 
+        ? manifestsResult 
+        : (manifestsResult?.data || []);
+      
+      // Ensure selectedLRs is always an array (parse if needed)
+      const parsedManifests = allManifests.map(manifest => {
+        const manifestCopy = { ...manifest };
+        if (manifestCopy.selectedLRs) {
+          if (typeof manifestCopy.selectedLRs === 'string') {
+            try {
+              manifestCopy.selectedLRs = JSON.parse(manifestCopy.selectedLRs);
+            } catch (e) {
+              console.warn('Could not parse selectedLRs for manifest:', manifest.manifestNumber, e);
+              manifestCopy.selectedLRs = [];
+            }
+          }
+          if (!Array.isArray(manifestCopy.selectedLRs)) {
+            manifestCopy.selectedLRs = [];
+          }
+        } else {
+          manifestCopy.selectedLRs = [];
+        }
+        return manifestCopy;
+      });
+      
+      setManifests(parsedManifests);
+      
+      setTrips(tripsResult.data || []);
+      setVendors((vendorsResult.data || []).filter(v => v.status === 'Active'));
+      
+      console.log('✅ Manifests loaded:', allManifests.length);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      // Fallback to localStorage
+      const ftlLRs = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
+      const ptlLRs = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
+      const storedLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
+      const allLRs = [...ftlLRs, ...ptlLRs, ...storedLRs];
+      const uniqueLRs = allLRs.filter((lr, index, self) => 
+        index === self.findIndex(t => t.id?.toString() === lr.id?.toString())
+      );
+      
+      const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
+      const storedDrivers = JSON.parse(localStorage.getItem('drivers') || '[]');
+      const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+      const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
+      const storedManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
+      const storedTrips = JSON.parse(localStorage.getItem('trips') || '[]');
+      const storedVendors = JSON.parse(localStorage.getItem('marketVehicleVendors') || '[]');
+      
+      setLrBookings(uniqueLRs);
+      setVehicles(storedVehicles.filter(v => v.status === 'Active'));
+      setDrivers(storedDrivers.filter(d => d.status === 'Active'));
+      setBranches(storedBranches.filter(b => b.status === 'Active'));
+      setCities(storedCities);
+      setManifests(storedManifests);
+      setTrips(storedTrips);
+      setVendors(storedVendors.filter(v => v.status === 'Active'));
+    }
+  };
+  
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        // Import syncService
-        const syncService = (await import('./utils/sync-service')).default;
-        
-        // Load from server
-        const [ftlResult, ptlResult, vehiclesResult, driversResult, branchesResult, citiesResult, manifestsResult, tripsResult, vendorsResult] = await Promise.all([
-          syncService.load('ftlLRBookings'),
-          syncService.load('ptlLRBookings'),
-          syncService.load('vehicles'),
-          syncService.load('drivers'),
-          syncService.load('branches'),
-          syncService.load('cities'),
-          syncService.load('manifests'),
-          syncService.load('trips'),
-          syncService.load('marketVehicleVendors')
-        ]);
-        
-        // Combine LR sources
-        const storedLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-        const allLRs = [...(ftlResult.data || []), ...(ptlResult.data || []), ...storedLRs];
-        const uniqueLRs = allLRs.filter((lr, index, self) => 
-          index === self.findIndex(t => t.id?.toString() === lr.id?.toString())
-        );
-        
-        setLrBookings(uniqueLRs);
-        setVehicles((vehiclesResult.data || []).filter(v => v.status === 'Active'));
-        setDrivers((driversResult.data || []).filter(d => d.status === 'Active'));
-        setBranches((branchesResult.data || []).filter(b => b.status === 'Active'));
-        setCities(citiesResult.data || []);
-        setManifests(manifestsResult.data || []);
-        setTrips(tripsResult.data || []);
-        setVendors((vendorsResult.data || []).filter(v => v.status === 'Active'));
-      } catch (error) {
-        console.error('Error loading data:', error);
-        // Fallback to localStorage
-        const ftlLRs = JSON.parse(localStorage.getItem('ftlLRBookings') || '[]');
-        const ptlLRs = JSON.parse(localStorage.getItem('ptlLRBookings') || '[]');
-        const storedLRs = JSON.parse(localStorage.getItem('lrBookings') || '[]');
-        const allLRs = [...ftlLRs, ...ptlLRs, ...storedLRs];
-        const uniqueLRs = allLRs.filter((lr, index, self) => 
-          index === self.findIndex(t => t.id?.toString() === lr.id?.toString())
-        );
-        
-        const storedVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
-        const storedDrivers = JSON.parse(localStorage.getItem('drivers') || '[]');
-        const storedBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-        const storedCities = JSON.parse(localStorage.getItem('cities') || '[]');
-        const storedManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-        const storedTrips = JSON.parse(localStorage.getItem('trips') || '[]');
-        const storedVendors = JSON.parse(localStorage.getItem('marketVehicleVendors') || '[]');
-        
-        setLrBookings(uniqueLRs);
-        setVehicles(storedVehicles.filter(v => v.status === 'Active'));
-        setDrivers(storedDrivers.filter(d => d.status === 'Active'));
-        setBranches(storedBranches.filter(b => b.status === 'Active'));
-        setCities(storedCities);
-        setManifests(storedManifests);
-        setTrips(storedTrips);
-        setVendors(storedVendors.filter(v => v.status === 'Active'));
-      }
-    };
-    
     loadData();
     
-    // Listen for sync events
-    const handleSync = () => {
+    // Listen for manifest creation/update events
+    const handleManifestCreated = () => {
+      console.log('🔄 Manifest created event received, reloading manifests...');
       loadData();
     };
-    window.addEventListener('dataSyncedFromServer', handleSync);
+    
+    const handleManifestUpdated = () => {
+      console.log('🔄 Manifest updated event received, reloading manifests...');
+      loadData();
+    };
+    
+    const handleDataSync = () => {
+      console.log('🔄 Data sync event received, reloading manifests...');
+      loadData();
+    };
+    
+    window.addEventListener('manifestCreated', handleManifestCreated);
+    window.addEventListener('manifestUpdated', handleManifestUpdated);
+    window.addEventListener('dataSyncedFromServer', handleDataSync);
     
     return () => {
-      window.removeEventListener('dataSyncedFromServer', handleSync);
+      window.removeEventListener('manifestCreated', handleManifestCreated);
+      window.removeEventListener('manifestUpdated', handleManifestUpdated);
+      window.removeEventListener('dataSyncedFromServer', handleDataSync);
     };
   }, []);
   
@@ -152,6 +198,31 @@ export default function ManifestForm() {
     }
   }, []);
 
+  // Admin branch context: if Admin selected a branch in dashboard/topbar, force manifest origin branch.
+  // If Admin selected "All", unlock and clear so user can choose any.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const apply = (branchId) => {
+      const id = branchId ? String(branchId) : '';
+      if (!id) return; // Admin selected ALL branches -> do not force
+      const b = (branches || []).find(x => String(x.id) === id);
+      if (b) {
+        setSelectedBranch(b);
+        setFormData(prev => ({ ...prev, branch: String(b.id) }));
+      } else {
+        setFormData(prev => ({ ...prev, branch: id }));
+      }
+    };
+
+    // Apply persisted selection on load
+    const persisted = localStorage.getItem('adminSelectedBranch');
+    if (persisted) apply(persisted);
+
+    const onChanged = (e) => apply(e?.detail?.branchId || '');
+    window.addEventListener('adminBranchChanged', onChanged);
+    return () => window.removeEventListener('adminBranchChanged', onChanged);
+  }, [isAdmin, branches]);
+
   const [formData, setFormData] = useState({
     manifestNumber: '',
     manifestDate: new Date().toISOString().split('T')[0],
@@ -180,12 +251,36 @@ export default function ManifestForm() {
     lrCount: 0
   });
 
-  // Auto-generate manifest number
+  // Auto-generate manifest number based on server data
   useEffect(() => {
-    const existingManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const manifestNo = `MNF${String(existingManifests.length + 1).padStart(6, '0')}`;
-    setFormData(prev => ({ ...prev, manifestNumber: manifestNo }));
-  }, []);
+    // Only generate when not editing and manifests are loaded
+    if (!editingManifestId && manifests.length >= 0) {
+      // Get the highest manifest number from existing manifests
+      const manifestNumbers = manifests
+        .map(m => {
+          if (!m.manifestNumber) return 0;
+          const match = m.manifestNumber.match(/MNF(\d+)/);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+        .filter(num => num > 0);
+      
+      const maxNumber = manifestNumbers.length > 0 ? Math.max(...manifestNumbers) : 0;
+      const nextNumber = maxNumber + 1;
+      const manifestNo = `MNF${String(nextNumber).padStart(6, '0')}`;
+      
+      setFormData(prev => {
+        // Always update manifest number when creating new manifest (not editing)
+        // Only if it's empty, default, or same as current calculated number
+        const currentNum = prev.manifestNumber?.match(/MNF(\d+)/);
+        const currentNumValue = currentNum ? parseInt(currentNum[1], 10) : 0;
+        
+        if (!prev.manifestNumber || currentNumValue <= maxNumber) {
+          return { ...prev, manifestNumber: manifestNo };
+        }
+        return prev;
+      });
+    }
+  }, [manifests, editingManifestId]);
 
   // Check if returning from LR creation to continue editing manifest
   useEffect(() => {
@@ -208,6 +303,26 @@ export default function ManifestForm() {
         setEditingManifestId(manifest.id);
         
         // Load manifest data into form
+        // Ensure selectedLRs is a parsed array of IDs
+        let selectedLRIds = [];
+        if (manifest.selectedLRs) {
+          let lrArray = manifest.selectedLRs;
+          if (typeof lrArray === 'string') {
+            try {
+              lrArray = JSON.parse(lrArray);
+            } catch (e) {
+              console.warn('Could not parse selectedLRs when returning to manifest edit:', e);
+              lrArray = [];
+            }
+          }
+          if (Array.isArray(lrArray)) {
+            selectedLRIds = lrArray.map(lr => {
+              if (typeof lr === 'object' && lr && lr.id) return lr.id;
+              return lr;
+            }).filter(Boolean);
+          }
+        }
+
         setFormData({
           manifestNumber: manifest.manifestNumber,
           manifestDate: manifest.manifestDate,
@@ -219,10 +334,7 @@ export default function ManifestForm() {
           vehicleNumber: manifest.vehicleNumber,
           driverName: manifest.driverName,
           route: manifest.route,
-          selectedLRs: manifest.selectedLRs?.map(lr => {
-            if (typeof lr === 'object' && lr.id) return lr.id;
-            return lr;
-          }) || [],
+          selectedLRs: selectedLRIds,
           departureDate: manifest.departureDate,
           departureTime: manifest.departureTime,
           loadingBy: manifest.loadingBy || '',
@@ -370,25 +482,58 @@ export default function ManifestForm() {
   };
 
   // Get available LRs for selection (not in any manifest, or in the manifest being edited)
-  const getAvailableLRs = () => {
+  const getAvailableLRs = useMemo(() => {
     // Ensure we have the latest LRs
-    const currentLRs = lrBookings.length > 0 ? lrBookings : reloadLRBookings();
-    if (!currentLRs.length) return [];
+    const currentLRs = lrBookings.length > 0 ? lrBookings : [];
+    if (!currentLRs.length) {
+      return [];
+    }
     
     // Get all LRs that are in other manifests (excluding the one being edited)
     const lrsInOtherManifests = new Set();
     
     manifests.forEach(manifest => {
       // Skip the manifest being edited - we want to show its LRs
-      if (editingManifestId && manifest.id === editingManifestId) return;
+      if (editingManifestId && manifest.id === editingManifestId) {
+        return;
+      }
       
       // Collect LR IDs from other manifests
-      if (manifest.selectedLRs && Array.isArray(manifest.selectedLRs)) {
-        manifest.selectedLRs.forEach(lr => {
-          // Handle both object and ID formats
-          const lrId = typeof lr === 'object' && lr.id ? lr.id : lr;
-          if (lrId) lrsInOtherManifests.add(lrId.toString());
-        });
+      if (manifest.selectedLRs) {
+        let lrArray = manifest.selectedLRs;
+        
+        // Handle case where selectedLRs might be a JSON string (from database)
+        // Note: Server should parse this, but handle both cases
+        if (typeof lrArray === 'string') {
+          try {
+            lrArray = JSON.parse(lrArray);
+          } catch (e) {
+            // Not JSON, skip this manifest
+            return;
+          }
+        }
+        
+        if (Array.isArray(lrArray) && lrArray.length > 0) {
+          lrArray.forEach(lr => {
+            // Handle both object and ID formats
+            let lrId = null;
+            
+            if (typeof lr === 'object' && lr !== null) {
+              // Could be {id: X} or full LR object
+              lrId = lr.id;
+            } else if (typeof lr === 'number' || typeof lr === 'string') {
+              // Direct ID
+              lrId = lr;
+            }
+            
+            if (lrId !== null && lrId !== undefined) {
+              const idValue = typeof lrId === 'object' && lrId.id ? lrId.id : lrId;
+              if (idValue) {
+                lrsInOtherManifests.add(idValue.toString());
+              }
+            }
+          });
+        }
       }
     });
     
@@ -396,17 +541,38 @@ export default function ManifestForm() {
     const editingManifest = editingManifestId ? manifests.find(m => m.id === editingManifestId) : null;
     const lrsInEditingManifest = new Set();
     if (editingManifest && editingManifest.selectedLRs) {
-      editingManifest.selectedLRs.forEach(lr => {
-        const lrId = typeof lr === 'object' && lr.id ? lr.id : lr;
-        if (lrId) lrsInEditingManifest.add(lrId.toString());
-      });
+      let lrArray = editingManifest.selectedLRs;
+      
+      // Handle case where selectedLRs might be a JSON string (from database)
+      if (typeof lrArray === 'string') {
+        try {
+          lrArray = JSON.parse(lrArray);
+        } catch (e) {
+          lrArray = [];
+        }
+      }
+      
+      if (Array.isArray(lrArray)) {
+        lrArray.forEach(lr => {
+          let lrId;
+          if (typeof lr === 'object' && lr !== null) {
+            lrId = lr.id;
+          } else {
+            lrId = lr;
+          }
+          if (lrId) {
+            const idValue = typeof lrId === 'object' && lrId.id ? lrId.id : lrId;
+            if (idValue) lrsInEditingManifest.add(idValue.toString());
+          }
+        });
+      }
     }
     
     // Return LRs that are either:
     // 1. Not in any manifest (available to add), OR
     // 2. In the manifest being edited (so they can be reselected/removed)
     // AND accessible to current user's branch
-    return currentLRs.filter(lr => {
+    const result = currentLRs.filter(lr => {
       if (!lr || !lr.id) return false;
       const lrIdStr = lr.id.toString();
       
@@ -416,14 +582,15 @@ export default function ManifestForm() {
       // If editing, include:
       // - LRs that are in the current manifest (for reselection/removal)
       // - LRs that are not in any other manifest (for adding new LRs)
-      if (editingManifestId) {
-        return lrsInEditingManifest.has(lrIdStr) || !lrsInOtherManifests.has(lrIdStr);
-      }
+      const isAvailable = editingManifestId 
+        ? (lrsInEditingManifest.has(lrIdStr) || !lrsInOtherManifests.has(lrIdStr))
+        : !lrsInOtherManifests.has(lrIdStr);
       
-      // Otherwise, only include LRs not in any manifest
-      return !lrsInOtherManifests.has(lrIdStr);
+      return isAvailable;
     });
-  };
+    
+    return result;
+  }, [lrBookings, manifests, editingManifestId, branches, currentUser, isAdmin, userBranch]);
 
   const handleLRToggle = (lrId) => {
     if (!lrId) return;
@@ -504,7 +671,24 @@ export default function ManifestForm() {
 
   const handlePrint = (manifest = null) => {
     if (manifest) {
-      setSelectedManifestForPrint(manifest);
+      // Ensure selectedLRs is always an array
+      const manifestCopy = { ...manifest };
+      if (manifestCopy.selectedLRs) {
+        if (typeof manifestCopy.selectedLRs === 'string') {
+          try {
+            manifestCopy.selectedLRs = JSON.parse(manifestCopy.selectedLRs);
+          } catch (e) {
+            console.warn('Could not parse selectedLRs for print:', e);
+            manifestCopy.selectedLRs = [];
+          }
+        }
+        if (!Array.isArray(manifestCopy.selectedLRs)) {
+          manifestCopy.selectedLRs = [];
+        }
+      } else {
+        manifestCopy.selectedLRs = [];
+      }
+      setSelectedManifestForPrint(manifestCopy);
       setTimeout(() => {
         window.print();
       }, 100);
@@ -552,11 +736,25 @@ export default function ManifestForm() {
     setEditingManifestId(manifest.id);
     
     // Load manifest data into form
-    const selectedLRIds = manifest.selectedLRs?.map(lr => {
-      // Handle both object and ID formats
-      if (typeof lr === 'object' && lr.id) return lr.id;
-      return lr;
-    }) || [];
+    // Ensure selectedLRs is a parsed array of IDs
+    let selectedLRIds = [];
+    if (manifest.selectedLRs) {
+      let lrArray = manifest.selectedLRs;
+      if (typeof lrArray === 'string') {
+        try {
+          lrArray = JSON.parse(lrArray);
+        } catch (e) {
+          console.warn('Could not parse selectedLRs for edit:', e);
+          lrArray = [];
+        }
+      }
+      if (Array.isArray(lrArray)) {
+        selectedLRIds = lrArray.map(lr => {
+          if (typeof lr === 'object' && lr && lr.id) return lr.id;
+          return lr;
+        }).filter(Boolean);
+      }
+    }
     
     setFormData({
       manifestNumber: manifest.manifestNumber,
@@ -617,14 +815,30 @@ export default function ManifestForm() {
     alert('✅ Manifest deleted successfully!');
   };
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
+    // Reload manifests from server before searching to ensure we have latest data
+    try {
+      const syncService = (await import('./utils/sync-service')).default;
+      const manifestsResult = await syncService.load('manifests');
+      const allManifests = Array.isArray(manifestsResult) 
+        ? manifestsResult 
+        : (manifestsResult?.data || []);
+      setManifests(allManifests);
+      console.log('🔄 Manifests reloaded for search:', allManifests.length);
+    } catch (error) {
+      console.error('Error reloading manifests for search:', error);
+    }
+    
+    // Use current manifests state (which may have been just updated)
     let filtered = [...manifests];
 
-    if (searchFilters.manifestNumber) {
+    // If manifest number is provided, search by it; otherwise show all
+    if (searchFilters.manifestNumber && searchFilters.manifestNumber.trim()) {
       filtered = filtered.filter(m => 
-        m.manifestNumber?.toLowerCase().includes(searchFilters.manifestNumber.toLowerCase())
+        m.manifestNumber?.toLowerCase().includes(searchFilters.manifestNumber.toLowerCase().trim())
       );
     }
+    // If manifest number is empty, show all manifests (no filter)
 
     if (searchFilters.fromDate) {
       filtered = filtered.filter(m => 
@@ -705,10 +919,12 @@ export default function ManifestForm() {
   const getDriverName = (driverId) => {
     if (!driverId) return 'N/A';
     const driver = drivers.find(d => d.id.toString() === driverId.toString());
-    return driver ? driver.driverName : driverId;
+    if (!driver) return driverId;
+    // Show driverName with nickName if available
+    return driver.nickName ? `${driver.driverName} (${driver.nickName})` : driver.driverName;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (formData.selectedLRs.length === 0) {
@@ -716,8 +932,6 @@ export default function ManifestForm() {
       return;
     }
 
-    const existingManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    
     const selectedLRDetails = lrBookings.filter(lr => 
       formData.selectedLRs.includes(lr.id)
     );
@@ -751,12 +965,18 @@ export default function ManifestForm() {
       return;
     }
 
-    if (editingManifestId) {
-      // Update existing manifest
-      const manifestIndex = existingManifests.findIndex(m => m.id === editingManifestId);
-      if (manifestIndex !== -1) {
-        const existingManifest = existingManifests[manifestIndex];
-        existingManifests[manifestIndex] = {
+    try {
+      const syncService = (await import('./utils/sync-service')).default;
+      
+      if (editingManifestId) {
+        // Update existing manifest
+        const existingManifest = manifests.find(m => m.id === editingManifestId);
+        if (!existingManifest) {
+          alert('⚠️ Manifest not found!');
+          return;
+        }
+        
+        const updatedManifest = {
           ...existingManifest,
           manifestDate: formData.manifestDate,
           branch: formData.branch,
@@ -773,16 +993,33 @@ export default function ManifestForm() {
           loadingBy: formData.loadingBy,
           vehicleKms: formData.vehicleKms,
           summary: manifestSummary,
-          remarks: formData.remarks
+          remarks: formData.remarks,
+          updatedAt: new Date().toISOString()
         };
-        localStorage.setItem('manifests', JSON.stringify(existingManifests));
-        setManifests(existingManifests);
+        
+        // Save to server
+        await syncService.save('manifests', updatedManifest);
+        
+        // Update local state
+        const updatedManifests = manifests.map(m => m.id === editingManifestId ? updatedManifest : m);
+        setManifests(updatedManifests);
+        localStorage.setItem('manifests', JSON.stringify(updatedManifests));
         
         const updatedManifestNumber = formData.manifestNumber;
         
         // Reset form completely
-        const existingManifestsForReset = JSON.parse(localStorage.getItem('manifests') || '[]');
-        const manifestNo = `MNF${String(existingManifestsForReset.length + 1).padStart(6, '0')}`;
+        // Generate next manifest number based on server data
+        const manifestNumbers = manifests
+          .map(m => {
+            const match = m.manifestNumber?.match(/MNF(\d+)/);
+            return match ? parseInt(match[1], 10) : 0;
+          })
+          .filter(num => num > 0);
+        
+        const maxNumber = manifestNumbers.length > 0 ? Math.max(...manifestNumbers) : 0;
+        const nextNumber = maxNumber + 1;
+        const manifestNo = `MNF${String(nextNumber).padStart(6, '0')}`;
+        
         setFormData({
           manifestNumber: manifestNo,
           manifestDate: new Date().toISOString().split('T')[0],
@@ -806,52 +1043,75 @@ export default function ManifestForm() {
         setSelectedBranch(null);
         setEditingManifestId(null);
         
-        alert(`Manifest "${updatedManifestNumber}" updated successfully!`);
+        alert(`✅ Manifest "${updatedManifestNumber}" updated successfully!`);
+        
+        // Trigger refresh event for other components
+        window.dispatchEvent(new CustomEvent('manifestUpdated'));
         
         // Switch back to search tab
         setActiveTab('search');
         handleSearch(); // Refresh search results
+      } else {
+        // Create new manifest
+        const newManifest = {
+          manifestNumber: formData.manifestNumber,
+          manifestDate: formData.manifestDate,
+          branch: formData.branch,
+          manifestType: formData.manifestType,
+          destinationBranch: formData.manifestType === 'branch' ? destinationBranch : '',
+          vendorId: formData.manifestType === 'vendor' ? formData.vendorId : '',
+          vendorName: formData.manifestType === 'vendor' ? formData.vendorName : '',
+          vehicleNumber: formData.vehicleNumber,
+          driverName: formData.driverName,
+          route: formData.route,
+          selectedLRs: selectedLRDetails,
+          departureDate: formData.departureDate,
+          departureTime: formData.departureTime,
+          loadingBy: formData.loadingBy,
+          vehicleKms: formData.vehicleKms,
+          summary: manifestSummary,
+          remarks: formData.remarks,
+          status: 'In Transit',
+          createdAt: new Date().toISOString()
+        };
+
+        // Save to server
+        const saveResult = await syncService.save('manifests', newManifest);
+        
+        // Extract the saved manifest data from the result
+        const savedManifest = saveResult?.data || saveResult;
+        
+        // Reload all manifests from server to ensure we have the latest data
+        const reloadedManifestsResult = await syncService.load('manifests');
+        const reloadedManifests = Array.isArray(reloadedManifestsResult) 
+          ? reloadedManifestsResult 
+          : (reloadedManifestsResult?.data || []);
+        
+        // Update local state with all manifests from server
+        setManifests(reloadedManifests);
+        localStorage.setItem('manifests', JSON.stringify(reloadedManifests));
+
+        alert(`✅ Manifest "${formData.manifestNumber}" created successfully!\n\nTotal LRs: ${manifestSummary.lrCount}\nTotal Pieces: ${manifestSummary.totalPieces}\nTotal Weight: ${manifestSummary.totalWeight} Kg\n\nSaved to server!`);
+        
+        // Trigger refresh event for other components
+        window.dispatchEvent(new CustomEvent('manifestCreated', { detail: { manifest: savedManifest } }));
+        
+        // Also trigger a general data sync event
+        window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+        
+        // Auto-print after creation
+        setTimeout(() => {
+          window.print();
+        }, 500);
       }
-    } else {
-      // Create new manifest
-      const newManifest = {
-        id: Date.now(),
-        manifestNumber: formData.manifestNumber,
-        manifestDate: formData.manifestDate,
-        branch: formData.branch,
-        manifestType: formData.manifestType,
-        destinationBranch: formData.manifestType === 'branch' ? destinationBranch : '',
-        vendorId: formData.manifestType === 'vendor' ? formData.vendorId : '',
-        vendorName: formData.manifestType === 'vendor' ? formData.vendorName : '',
-        vehicleNumber: formData.vehicleNumber,
-        driverName: formData.driverName,
-        route: formData.route,
-        selectedLRs: selectedLRDetails,
-        departureDate: formData.departureDate,
-        departureTime: formData.departureTime,
-        loadingBy: formData.loadingBy,
-        vehicleKms: formData.vehicleKms,
-        summary: manifestSummary,
-        remarks: formData.remarks,
-        status: 'In Transit',
-        createdAt: new Date().toISOString()
-      };
-
-      existingManifests.push(newManifest);
-      localStorage.setItem('manifests', JSON.stringify(existingManifests));
-      setManifests(existingManifests);
-
-      alert(`Manifest "${formData.manifestNumber}" created successfully!\n\nTotal LRs: ${manifestSummary.lrCount}\nTotal Pieces: ${manifestSummary.totalPieces}\nTotal Weight: ${manifestSummary.totalWeight} Kg\n\nYou can now print the manifest.`);
-      
-      // Auto-print after creation
-      setTimeout(() => {
-        window.print();
-      }, 500);
+    } catch (error) {
+      console.error('Error saving manifest:', error);
+      alert(`❌ Error saving manifest: ${error.message || 'Unknown error'}`);
     }
   };
 
   // Get selected LR details - handle both ID references and full objects
-  const selectedLRDetails = formData.selectedLRs.map(selectedLRId => {
+  const selectedLRDetails = (Array.isArray(formData.selectedLRs) ? formData.selectedLRs : []).map(selectedLRId => {
     // First try to find in lrBookings by ID
     let lr = lrBookings.find(lr => lr.id?.toString() === selectedLRId?.toString());
     
@@ -859,12 +1119,23 @@ export default function ManifestForm() {
     if (!lr && editingManifestId) {
       const editingManifest = manifests.find(m => m.id === editingManifestId);
       if (editingManifest && editingManifest.selectedLRs) {
-        const storedLR = editingManifest.selectedLRs.find(lr => {
-          const lrId = typeof lr === 'object' && lr.id ? lr.id : lr;
-          return lrId?.toString() === selectedLRId?.toString();
-        });
-        if (storedLR && typeof storedLR === 'object' && storedLR.id) {
-          lr = storedLR;
+        let lrArray = editingManifest.selectedLRs;
+        if (typeof lrArray === 'string') {
+          try {
+            lrArray = JSON.parse(lrArray);
+          } catch (e) {
+            console.warn('Could not parse selectedLRs when resolving LR details:', e);
+            lrArray = [];
+          }
+        }
+        if (Array.isArray(lrArray)) {
+          const storedLR = lrArray.find(lrItem => {
+            const lrId = typeof lrItem === 'object' && lrItem.id ? lrItem.id : lrItem;
+            return lrId?.toString() === selectedLRId?.toString();
+          });
+          if (storedLR && typeof storedLR === 'object' && storedLR.id) {
+            lr = storedLR;
+          }
         }
       }
     }
@@ -1219,17 +1490,15 @@ export default function ManifestForm() {
             <div className="grid-3">
               <div className="input-group">
                 <label>Manifest Number</label>
-                <select
+                <input
+                  type="text"
                   value={searchFilters.manifestNumber}
                   onChange={(e) => setSearchFilters(prev => ({ ...prev, manifestNumber: e.target.value }))}
-                >
-                  <option value="">All Manifests</option>
-                  {manifests.map(manifest => (
-                    <option key={manifest.id} value={manifest.manifestNumber}>
-                      {manifest.manifestNumber} - {manifest.manifestDate}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Enter manifest number or leave blank for all"
+                />
+                <small style={{ display: 'block', marginTop: '4px', fontSize: '0.75rem', color: '#64748b' }}>
+                  Enter manifest number to search specific manifest, or leave blank to search all
+                </small>
               </div>
               
               <div className="input-group">
@@ -1317,6 +1586,37 @@ export default function ManifestForm() {
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
               >
                 <Search size={18} /> Search
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  // Reload manifests from server
+                  try {
+                    const syncService = (await import('./utils/sync-service')).default;
+                    const manifestsResult = await syncService.load('manifests');
+                    const allManifests = Array.isArray(manifestsResult) 
+                      ? manifestsResult 
+                      : (manifestsResult?.data || []);
+                    setManifests(allManifests);
+                    localStorage.setItem('manifests', JSON.stringify(allManifests));
+                    console.log('🔄 Manifests refreshed:', allManifests.length);
+                    alert(`✅ Manifests refreshed! Found ${allManifests.length} manifest(s).`);
+                  } catch (error) {
+                    console.error('Error refreshing manifests:', error);
+                    alert('❌ Error refreshing manifests. Please try again.');
+                  }
+                }}
+                className="btn"
+                style={{ 
+                  background: '#10b981', 
+                  color: 'white',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}
+                title="Reload manifests from server"
+              >
+                🔄 Refresh
               </button>
               <button
                 type="button"
@@ -1488,6 +1788,17 @@ export default function ManifestForm() {
 
             {/* Company Header */}
             <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+                <img
+                  src="/brand-logo.png"
+                  alt="Company Logo"
+                  style={{ height: '56px', width: 'auto', objectFit: 'contain' }}
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    e.currentTarget.src = '/logo192.png';
+                  }}
+                />
+              </div>
               <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>
                 Multimode Logistics (India) Private Limited
               </div>
@@ -1593,7 +1904,7 @@ export default function ManifestForm() {
                 </tr>
               </thead>
               <tbody>
-                {selectedManifestForPrint.selectedLRs?.map((lr, index) => {
+                {(Array.isArray(selectedManifestForPrint.selectedLRs) ? selectedManifestForPrint.selectedLRs : []).map((lr, index) => {
                   const originCity = getCityName(lr.origin);
                   const destCity = getCityName(lr.destination);
                   const cityDisplay = `${originCity}-${destCity}`;
@@ -1627,7 +1938,14 @@ export default function ManifestForm() {
                   return (
                     <tr key={lr.id || index} style={{ border: '1px solid #000' }}>
                       <td style={{ border: '1px solid #000', padding: '6px' }}>{index + 1}</td>
-                      <td style={{ border: '1px solid #000', padding: '6px', fontFamily: 'monospace' }}>{lr.lrNumber || 'N/A'}</td>
+                      <td style={{ border: '1px solid #000', padding: '6px', fontFamily: 'monospace' }}>
+                        {lr.lrNumber || 'N/A'}
+                        {lr.referenceNumber && (
+                          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>
+                            Ref: {lr.referenceNumber}
+                          </div>
+                        )}
+                      </td>
                       <td style={{ border: '1px solid #000', padding: '6px' }}>{formatDateShort(lr.bookingDate || lr.createdAt)}</td>
                       <td style={{ border: '1px solid #000', padding: '6px' }}>{getLRType(lr.paymentMode)}</td>
                       <td style={{ border: '1px solid #000', padding: '6px' }}>{cityDisplay}</td>
@@ -1968,7 +2286,7 @@ export default function ManifestForm() {
             <div className="grid-2">
               <div className="input-group">
                 <label>Origin Branch *</label>
-                <select
+                  <select
                   value={formData.branch}
                   onChange={(e) => {
                     const branchId = e.target.value;
@@ -1977,6 +2295,10 @@ export default function ManifestForm() {
                     setFormData(prev => ({ ...prev, branch: branchId }));
                   }}
                   required
+                    disabled={isAdmin && !!localStorage.getItem('adminSelectedBranch')}
+                    style={(isAdmin && !!localStorage.getItem('adminSelectedBranch'))
+                      ? { background: '#f3f4f6', cursor: 'not-allowed' }
+                      : {}}
                 >
                   <option value="">-- Select Origin Branch --</option>
                   {branches.map(branch => (
@@ -2278,7 +2600,7 @@ export default function ManifestForm() {
               }}>
                 ⚠️ No LR bookings available. Please create LR bookings first.
               </div>
-            ) : getAvailableLRs().length === 0 && !editingManifestId ? (
+            ) : getAvailableLRs.length === 0 && !editingManifestId ? (
               <div style={{
                 padding: '20px',
                 background: '#fee2e2',
@@ -2289,7 +2611,7 @@ export default function ManifestForm() {
               }}>
                 ⚠️ No available LR bookings. All LRs are already manifested.
               </div>
-            ) : getAvailableLRs().length === 0 && editingManifestId ? (
+            ) : getAvailableLRs.length === 0 && editingManifestId ? (
               <div style={{
                 padding: '20px',
                 background: '#fef3c7',
@@ -2322,7 +2644,7 @@ export default function ManifestForm() {
                     <button
                       type="button"
                       onClick={() => {
-                        const availableLRIds = getAvailableLRs().map(lr => lr.id);
+                        const availableLRIds = getAvailableLRs.map(lr => lr.id);
                         setFormData(prev => ({
                           ...prev,
                           selectedLRs: prev.selectedLRs.length === availableLRIds.length ? [] : availableLRIds
@@ -2342,13 +2664,13 @@ export default function ManifestForm() {
                       onMouseOver={(e) => e.target.style.background = '#cbd5e1'}
                       onMouseOut={(e) => e.target.style.background = '#e2e8f0'}
                     >
-                      {formData.selectedLRs.length === getAvailableLRs().length ? 'Deselect All' : 'Select All'}
+                      {formData.selectedLRs.length === getAvailableLRs.length ? 'Deselect All' : 'Select All'}
                     </button>
                   </div>
                 </div>
                 
                 {(() => {
-                  const availableLRs = getAvailableLRs();
+                  const availableLRs = getAvailableLRs;
                   const editingManifest = editingManifestId ? manifests.find(m => m.id === editingManifestId) : null;
                   const lrsInEditingManifest = new Set();
                   if (editingManifest && editingManifest.selectedLRs) {
@@ -2387,6 +2709,11 @@ export default function ManifestForm() {
                       />
                       <div style={{ flex: 1 }}>
                         <strong className="mono">LR: {lr.lrNumber || 'N/A'}</strong>
+                        {lr.referenceNumber && (
+                          <span style={{ marginLeft: '12px', fontSize: '0.9rem', color: '#64748b', fontWeight: 'normal' }}>
+                            Ref: {lr.referenceNumber}
+                          </span>
+                        )}
                         <span style={{ marginLeft: '12px', opacity: 0.8 }}>
                           {lr.bookingDate || 'N/A'}
                         </span>
@@ -2554,6 +2881,11 @@ export default function ManifestForm() {
                         <strong className="mono" style={{ fontSize: '1.1rem', color: '#059669' }}>
                           LR: {lr.lrNumber || 'N/A'}
                         </strong>
+                        {lr.referenceNumber && (
+                          <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '2px' }}>
+                            Ref: {lr.referenceNumber}
+                          </div>
+                        )}
                         <div style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '4px' }}>
                           {lr.bookingDate || 'N/A'}
                         </div>

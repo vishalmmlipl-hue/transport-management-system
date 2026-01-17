@@ -11,9 +11,11 @@ const STORAGE_TO_TABLE = {
   'manifests': 'manifests',
   'trips': 'trips',
   'invoices': 'invoices',
+  'payments': 'payments',
   'pods': 'pods',
   'clients': 'clients',
   'tbbClients': 'clients',
+  'clientRates': 'clientRates',
   'branches': 'branches',
   'cities': 'cities',
   'vehicles': 'vehicles',
@@ -23,9 +25,11 @@ const STORAGE_TO_TABLE = {
   'accounts': 'accounts',
   'expenseTypes': 'expenseTypes',
   'branchExpenses': 'branchExpenses',
+  'branchAccounts': 'branchAccounts',
   'marketVehicleVendors': 'marketVehicleVendors',
   'otherVendors': 'otherVendors',
   'ftlInquiries': 'ftlInquiries',
+  'vehicleMaintenance': 'vehicleMaintenance',
 };
 
 // Get table name from localStorage key
@@ -53,6 +57,12 @@ export const syncService = {
       }
 
       console.log(`   API result:`, apiResult);
+
+      // If server reachable but rejected the request, do NOT fallback to localStorage.
+      if (apiResult && apiResult.success === false && apiResult.fallback === false) {
+        console.warn(`   ❌ Server rejected ${storageKey} save:`, apiResult.error);
+        return { success: false, error: apiResult.error, synced: false, fallback: false };
+      }
 
       // Check if API save was successful
       // apiResult should be the data object if successful (from databaseAPI.create/update)
@@ -97,8 +107,11 @@ export const syncService = {
     }
 
     // Fallback to localStorage only
+    // IMPORTANT: Use the same filtered data that was sent to API
+    // This ensures localStorage also has the correct structure
     const localResult = this.saveToLocalStorage(storageKey, data, isUpdate, id);
     console.warn(`   ⚠️ Saved ${storageKey} to localStorage only (server unavailable)`);
+    console.warn(`   ⚠️ NOTE: localStorage fallback should only be temporary. Data needs to be synced to server.`);
     return { success: true, data: localResult, synced: false, fallback: true };
   },
 

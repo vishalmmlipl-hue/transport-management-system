@@ -1,5 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, Package, Truck, Calendar, Clock, Search, Printer, X } from 'lucide-react';
+import { apiService } from './utils/apiService';
+
+// Helper function to clean branch names
+const cleanBranchName = (name) => {
+  if (!name) return '';
+  let cleaned = name.toString().trim();
+  cleaned = cleaned.replace(/0+$/, '');
+  cleaned = cleaned.trim();
+  cleaned = cleaned.replace(/\s+0+$/, '');
+  return cleaned.trim();
+};
 
 export default function ManifestReceiveForm() {
   const [manifests, setManifests] = useState([]);
@@ -8,6 +19,7 @@ export default function ManifestReceiveForm() {
   const [vehicles, setVehicles] = useState([]);
   const [drivers, setDrivers] = useState([]);
   const [currentBranch, setCurrentBranch] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('Pending'); // Pending, Received, All
   const [searchTerm, setSearchTerm] = useState('');
   const [lrReceiptData, setLrReceiptData] = useState({}); // Track individual LR receipts: { lrId: { received: bool, receivedPieces: number, discrepancy: string, vendorLRNumber: string } }
@@ -28,76 +40,205 @@ export default function ManifestReceiveForm() {
   const [currentUser, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // Load current user's branch from localStorage
+  // Load branches, cities, vehicles, drivers from API
   useEffect(() => {
-    const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
-    const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
-    const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
-    const allVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
-    const allDrivers = JSON.parse(localStorage.getItem('drivers') || '[]');
-    
-    setBranches(allBranches);
-    setCities(allCities);
-    setVehicles(allVehicles.filter(v => v.status === 'Active'));
-    setDrivers(allDrivers.filter(d => d.status === 'Active'));
-    
-    // Get current user and admin status
-    let userIsAdmin = false;
-    if (user) {
-      setCurrentUser(user);
-      
-      // Check if admin
-      const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
-      const systemUser = systemUsers.find(u => u.username === user.username);
-      const userRole = systemUser?.userRole || user?.role || '';
-      userIsAdmin = userRole === 'Admin' || userRole === 'admin';
-      setIsAdmin(userIsAdmin);
-      
-      // Set current branch to logged-in user's branch
-      let userBranchId = null;
-      
-      // For admin, check adminSelectedBranch first
-      if (userIsAdmin) {
-        const adminSelectedBranchId = localStorage.getItem('adminSelectedBranch');
-        if (adminSelectedBranchId) {
-          userBranchId = adminSelectedBranchId;
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        
+        // Load branches from API
+        const branchesData = await apiService.getBranches();
+        const cleanedBranches = (branchesData || []).filter(b =>
+          b.status === 'Active' || !b.status || b.status === undefined
+        ).map(branch => ({
+          ...branch,
+          branchName: cleanBranchName(branch.branchName || '')
+        }));
+        setBranches(cleanedBranches);
+        
+        // Load cities from API
+        const citiesData = await apiService.getCities();
+        setCities(citiesData || []);
+        
+        // Load vehicles from API
+        const vehiclesData = await apiService.getVehicles();
+        setVehicles((vehiclesData || []).filter(v => v.status === 'Active'));
+        
+        // Load drivers from API
+        const driversData = await apiService.getDrivers();
+        setDrivers((driversData || []).filter(d => d.status === 'Active'));
+        
+        // Load user from localStorage (for now, as user management might still use localStorage)
+        const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
+        
+        // Get current user and admin status
+        let userIsAdmin = false;
+        if (user) {
+          setCurrentUser(user);
+          
+          // Check if admin
+          const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
+          const systemUser = systemUsers.find(u => u.username === user.username);
+          const userRole = systemUser?.userRole || user?.role || '';
+          userIsAdmin = userRole === 'Admin' || userRole === 'admin';
+          setIsAdmin(userIsAdmin);
+          
+          // Set current branch to logged-in user's branch
+          let userBranchId = null;
+          
+          // For admin, check adminSelectedBranch first
+          if (userIsAdmin) {
+            const adminSelectedBranchId = localStorage.getItem('adminSelectedBranch');
+            if (adminSelectedBranchId) {
+              userBranchId = adminSelectedBranchId;
+            }
+          }
+          
+          // Get branch from system user record
+          // Skip if branch is 'all' (Super Admin/Admin with all branches access)
+          if (!userBranchId && systemUser && systemUser.branch && systemUser.branch !== 'all' && systemUser.branch !== 'ALL') {
+            userBranchId = systemUser.branch;
+          } else if (!userBranchId && user.branch && user.branch !== 'all' && user.branch !== 'ALL') {
+            userBranchId = user.branch;
+          }
+          
+          if (userBranchId) {
+            const branch = cleanedBranches.find(b => 
+              b.id.toString() === userBranchId.toString() || 
+              b.branchCode === userBranchId.toString()
+            );
+            if (branch) {
+              setCurrentBranch(branch);
+            }
+          }
         }
+      } catch (error) {
+        console.error('Error loading data:', error);
+        // Fallback to localStorage if API fails
+        const allBranches = JSON.parse(localStorage.getItem('branches') || '[]');
+        const allCities = JSON.parse(localStorage.getItem('cities') || '[]');
+        const allVehicles = JSON.parse(localStorage.getItem('vehicles') || '[]');
+        const allDrivers = JSON.parse(localStorage.getItem('drivers') || '[]');
+        
+        setBranches(allBranches);
+        setCities(allCities);
+        setVehicles(allVehicles.filter(v => v.status === 'Active'));
+        setDrivers(allDrivers.filter(d => d.status === 'Active'));
+      } finally {
+        setLoading(false);
       }
-      
-      // Get branch from system user record
-      if (!userBranchId && systemUser && systemUser.branch) {
-        userBranchId = systemUser.branch;
-      } else if (!userBranchId && user.branch) {
-        userBranchId = user.branch;
-      }
-      
-      if (userBranchId) {
-        const branch = allBranches.find(b => 
-          b.id.toString() === userBranchId.toString() || 
-          b.branchCode === userBranchId.toString()
-        );
-        if (branch) {
-          setCurrentBranch(branch);
-        }
-      }
-    }
+    };
+    
+    loadData();
   }, []);
 
-  // Load manifests
+  // Load manifests from API
+  const loadManifests = async () => {
+    try {
+      console.log('🔄 Loading manifests from API...');
+      const manifestsData = await apiService.getManifests();
+      const allManifests = Array.isArray(manifestsData) ? manifestsData : (manifestsData?.data || []);
+      
+      // Normalize selectedLRs for all manifests - ensure it's always an array
+      const normalizedManifests = allManifests.map(manifest => {
+        const manifestCopy = { ...manifest };
+        if (manifestCopy.selectedLRs) {
+          if (typeof manifestCopy.selectedLRs === 'string') {
+            try {
+              manifestCopy.selectedLRs = JSON.parse(manifestCopy.selectedLRs);
+            } catch (e) {
+              console.warn('Could not parse selectedLRs for manifest:', manifest.manifestNumber, e);
+              manifestCopy.selectedLRs = [];
+            }
+          }
+          if (!Array.isArray(manifestCopy.selectedLRs)) {
+            manifestCopy.selectedLRs = [];
+          }
+        } else {
+          manifestCopy.selectedLRs = [];
+        }
+        return manifestCopy;
+      });
+      
+      setManifests(normalizedManifests);
+      console.log('✅ Manifests loaded:', normalizedManifests.length);
+    } catch (error) {
+      console.error('Error loading manifests:', error);
+      // Fallback to localStorage if API fails
+      const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
+      // Normalize fallback manifests too
+      const normalizedManifests = allManifests.map(manifest => {
+        const manifestCopy = { ...manifest };
+        if (manifestCopy.selectedLRs) {
+          if (typeof manifestCopy.selectedLRs === 'string') {
+            try {
+              manifestCopy.selectedLRs = JSON.parse(manifestCopy.selectedLRs);
+            } catch (e) {
+              manifestCopy.selectedLRs = [];
+            }
+          }
+          if (!Array.isArray(manifestCopy.selectedLRs)) {
+            manifestCopy.selectedLRs = [];
+          }
+        } else {
+          manifestCopy.selectedLRs = [];
+        }
+        return manifestCopy;
+      });
+      setManifests(normalizedManifests);
+    }
+  };
+  
   useEffect(() => {
-    const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    setManifests(allManifests);
-  }, []);
+    if (!loading) { // Only load manifests after branches/cities are loaded
+      loadManifests();
+    }
+  }, [loading]);
+  
+  // Listen for manifest creation/update events
+  useEffect(() => {
+    const handleManifestCreated = () => {
+      console.log('🔄 Manifest created event received in receive form, reloading...');
+      loadManifests();
+    };
+    
+    const handleManifestUpdated = () => {
+      console.log('🔄 Manifest updated event received in receive form, reloading...');
+      loadManifests();
+    };
+    
+    const handleDataSync = () => {
+      console.log('🔄 Data sync event received in receive form, reloading...');
+      loadManifests();
+    };
+    
+    window.addEventListener('manifestCreated', handleManifestCreated);
+    window.addEventListener('manifestUpdated', handleManifestUpdated);
+    window.addEventListener('dataSyncedFromServer', handleDataSync);
+    
+    return () => {
+      window.removeEventListener('manifestCreated', handleManifestCreated);
+      window.removeEventListener('manifestUpdated', handleManifestUpdated);
+      window.removeEventListener('dataSyncedFromServer', handleDataSync);
+    };
+  }, [loading]);
 
   // Get destination branch from manifest route/LRs
   const getDestinationBranch = (manifest) => {
+    if (branches.length === 0) return null;
+    
     // First check if destinationBranch is explicitly set
     if (manifest.destinationBranch) {
       const branch = branches.find(b => 
-        b.id.toString() === manifest.destinationBranch.toString() || 
-        b.branchCode === manifest.destinationBranch
+        b.id?.toString() === manifest.destinationBranch?.toString() || 
+        b.branchCode === manifest.destinationBranch?.toString()
       );
-      if (branch) return branch;
+      if (branch) {
+        return {
+          ...branch,
+          branchName: cleanBranchName(branch.branchName || '')
+        };
+      }
     }
     
     // Try to determine from LR destinations
@@ -112,18 +253,22 @@ export default function ManifestReceiveForm() {
         const destinationCity = cities.find(c => 
           c.code === lrDestination || 
           c.cityName === lrDestination ||
-          c.id.toString() === lrDestination.toString()
+          c.id?.toString() === lrDestination?.toString()
         );
         
         if (destinationCity) {
           // Find branch in that city/state
-          const destBranch = branches.find(b => 
-            b.address && (
-              b.address.city === destinationCity.cityName || 
-              b.address.state === destinationCity.state
-            )
-          );
-          if (destBranch) return destBranch;
+          const destBranch = branches.find(b => {
+            const branchCity = b.address?.city || b.city;
+            const branchState = b.address?.state || b.state;
+            return branchCity === destinationCity.cityName || branchState === destinationCity.state;
+          });
+          if (destBranch) {
+            return {
+              ...destBranch,
+              branchName: cleanBranchName(destBranch.branchName || '')
+            };
+          }
         }
       }
     }
@@ -132,18 +277,58 @@ export default function ManifestReceiveForm() {
 
   // Get origin branch from manifest
   const getOriginBranchFromManifest = (manifest) => {
-    if (manifest.branch) {
-      const branch = branches.find(b => 
-        b.id.toString() === manifest.branch.toString() || 
-        b.branchCode === manifest.branch
-      );
-      return branch;
+    if (!manifest || branches.length === 0) return null;
+    
+    // Try multiple ways to find the branch
+    const branchId = manifest.branch || manifest.originBranch || manifest.branchId;
+    if (!branchId) return null;
+    
+    const branch = branches.find(b => {
+      const bId = b.id?.toString();
+      const bCode = b.branchCode?.toString();
+      const mBranch = branchId?.toString();
+      
+      return bId === mBranch || 
+             bCode === mBranch ||
+             bId === manifest.branch?.toString() ||
+             bCode === manifest.branch?.toString();
+    });
+    
+    if (branch) {
+      return {
+        ...branch,
+        branchName: cleanBranchName(branch.branchName || '')
+      };
     }
+    
     return null;
   };
 
   // Filter manifests for current branch based on manifest type
   const getPendingManifests = () => {
+    // Admin with "All branches" can see all manifests
+    if (!currentBranch && isAdmin) {
+      return manifests.filter(manifest => {
+        // Filter by status
+        if (filterStatus === 'Pending') {
+          return !manifest.receivedAt && manifest.status !== 'Received';
+        } else if (filterStatus === 'Received') {
+          return manifest.receivedAt || manifest.status === 'Received';
+        }
+        return true; // All
+      }).filter(manifest => {
+        // Filter by search term
+        if (!searchTerm) return true;
+        const term = searchTerm.toLowerCase();
+        return (
+          manifest.manifestNumber.toLowerCase().includes(term) ||
+          manifest.vehicleNumber?.toLowerCase().includes(term) ||
+          manifest.driverName?.toLowerCase().includes(term) ||
+          manifest.route?.toLowerCase().includes(term)
+        );
+      });
+    }
+
     if (!currentBranch) return [];
     
     return manifests.filter(manifest => {
@@ -190,18 +375,17 @@ export default function ManifestReceiveForm() {
     });
   };
 
-  const handleLRReceiveToggle = (manifestId, lrId, lrData) => {
-    if (!currentBranch) {
+  const handleLRReceiveToggle = async (manifestId, lrId, lrData) => {
+    if (!currentBranch && !isAdmin) {
       alert('⚠️ Please select a branch first!');
       return;
     }
 
-    const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const manifestIndex = allManifests.findIndex(m => m.id === manifestId);
+    const manifestIndex = manifests.findIndex(m => m.id === manifestId);
     
     if (manifestIndex === -1) return;
 
-    const manifest = allManifests[manifestIndex];
+    const manifest = manifests[manifestIndex];
     
     // Verify that current branch can receive this manifest
     const manifestType = manifest.manifestType || 'branch';
@@ -212,14 +396,12 @@ export default function ManifestReceiveForm() {
     if (manifestType === 'branch') {
       // Branch-to-branch: Only destination branch can receive
       canReceive = destBranch && (
-        destBranch.id.toString() === currentBranch.id.toString() ||
-        destBranch.branchCode === currentBranch.branchCode
+        (currentBranch ? (destBranch.id.toString() === currentBranch.id.toString() || destBranch.branchCode === currentBranch.branchCode) : true)
       );
     } else if (manifestType === 'vendor') {
       // Branch-to-vendor: Only origin branch can receive
       canReceive = originBranch && (
-        originBranch.id.toString() === currentBranch.id.toString() ||
-        originBranch.branchCode === currentBranch.branchCode
+        (currentBranch ? (originBranch.id.toString() === currentBranch.id.toString() || originBranch.branchCode === currentBranch.branchCode) : true)
       );
     }
     
@@ -255,7 +437,7 @@ export default function ManifestReceiveForm() {
     }
 
     // Update manifest
-    allManifests[manifestIndex] = {
+    const updatedManifest = {
       ...manifest,
       lrReceipts: lrReceipts,
       // Mark manifest as received if all LRs are received
@@ -263,21 +445,45 @@ export default function ManifestReceiveForm() {
       receivedAt: Object.keys(lrReceipts).length === (manifest.selectedLRs?.length || 0) ? new Date().toISOString() : manifest.receivedAt
     };
 
-    localStorage.setItem('manifests', JSON.stringify(allManifests));
-    setManifests(allManifests);
-    setLrReceiptData(lrReceipts);
+    // Save to API
+    try {
+      await apiService.updateManifest(manifestId, updatedManifest);
+      // Update local state
+      const updatedManifests = [...manifests];
+      const index = updatedManifests.findIndex(m => m.id === manifestId);
+      if (index !== -1) {
+        updatedManifests[index] = updatedManifest;
+        setManifests(updatedManifests);
+        setLrReceiptData(lrReceipts);
+      }
+      
+      // Dispatch event to notify other components
+      window.dispatchEvent(new CustomEvent('manifestUpdated', { detail: { manifest: updatedManifest } }));
+      window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+    } catch (error) {
+      console.error('Error updating manifest:', error);
+      alert('⚠️ Error saving manifest. Please try again.');
+      // Fallback to localStorage
+      const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
+      const fallbackIndex = allManifests.findIndex(m => m.id === manifestId);
+      if (fallbackIndex !== -1) {
+        allManifests[fallbackIndex] = updatedManifest;
+        localStorage.setItem('manifests', JSON.stringify(allManifests));
+        setManifests(allManifests);
+        setLrReceiptData(lrReceipts);
+      }
+    }
   };
 
-  const handleSaveDiscrepancy = () => {
+  const handleSaveDiscrepancy = async () => {
     if (!selectedLRForDiscrepancy) return;
 
     const { manifestId, lrId, receipt } = selectedLRForDiscrepancy;
-    const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const manifestIndex = allManifests.findIndex(m => m.id === manifestId);
+    const manifestIndex = manifests.findIndex(m => m.id === manifestId);
     
     if (manifestIndex === -1) return;
 
-    const manifest = allManifests[manifestIndex];
+    const manifest = manifests[manifestIndex];
     const lrReceipts = manifest.lrReceipts || {};
     const expectedPieces = receipt?.expectedPieces || parseInt(selectedLRForDiscrepancy.lrData?.pieces || 0);
     const receivedPieces = parseInt(receipt?.receivedPieces || expectedPieces);
@@ -304,19 +510,42 @@ export default function ManifestReceiveForm() {
       };
     }
 
-    allManifests[manifestIndex] = {
+    const updatedManifest = {
       ...manifest,
-      lrReceipts: lrReceipts
+      lrReceipts: lrReceipts,
+      status: Object.keys(lrReceipts).length === (manifest.selectedLRs?.length || 0) ? 'Received' : manifest.status,
+      receivedAt: Object.keys(lrReceipts).length === (manifest.selectedLRs?.length || 0) ? new Date().toISOString() : manifest.receivedAt
     };
 
-    localStorage.setItem('manifests', JSON.stringify(allManifests));
-    setManifests(allManifests);
+    // Save to API
+    try {
+      await apiService.updateManifest(manifestId, updatedManifest);
+      // Update local state
+      const updatedManifests = [...manifests];
+      updatedManifests[manifestIndex] = updatedManifest;
+      setManifests(updatedManifests);
+      
+      // Dispatch event to notify other components
+      window.dispatchEvent(new CustomEvent('manifestUpdated', { detail: { manifest: updatedManifest } }));
+      window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+    } catch (error) {
+      console.error('Error saving discrepancy:', error);
+      alert('⚠️ Error saving discrepancy. Please try again.');
+      // Fallback to localStorage
+      const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
+      const fallbackIndex = allManifests.findIndex(m => m.id === manifestId);
+      if (fallbackIndex !== -1) {
+        allManifests[fallbackIndex] = updatedManifest;
+        localStorage.setItem('manifests', JSON.stringify(allManifests));
+        setManifests(allManifests);
+      }
+    }
     setShowDiscrepancyModal(false);
     setSelectedLRForDiscrepancy(null);
   };
 
-  const handleReceiveManifest = (manifestId) => {
-    if (!currentBranch) {
+  const handleReceiveManifest = async (manifestId) => {
+    if (!currentBranch && !isAdmin) {
       alert('⚠️ Please select a branch first!');
       return;
     }
@@ -333,14 +562,12 @@ export default function ManifestReceiveForm() {
     if (manifestType === 'branch') {
       // Branch-to-branch: Only destination branch can receive
       canReceive = destBranch && (
-        destBranch.id.toString() === currentBranch.id.toString() ||
-        destBranch.branchCode === currentBranch.branchCode
+        (currentBranch ? (destBranch.id.toString() === currentBranch.id.toString() || destBranch.branchCode === currentBranch.branchCode) : true)
       );
     } else if (manifestType === 'vendor') {
       // Branch-to-vendor: Only origin branch can receive
       canReceive = originBranch && (
-        originBranch.id.toString() === currentBranch.id.toString() ||
-        originBranch.branchCode === currentBranch.branchCode
+        (currentBranch ? (originBranch.id.toString() === currentBranch.id.toString() || originBranch.branchCode === currentBranch.branchCode) : true)
       );
     }
     
@@ -349,8 +576,7 @@ export default function ManifestReceiveForm() {
       return;
     }
 
-    const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const manifestIndex = allManifests.findIndex(m => m.id === manifestId);
+    const manifestIndex = manifests.findIndex(m => m.id === manifestId);
     
     if (manifestIndex === -1) {
       alert('Manifest not found!');
@@ -360,7 +586,7 @@ export default function ManifestReceiveForm() {
     const receiveData = {
       receivedAt: new Date().toISOString(),
       receivedBy: JSON.parse(localStorage.getItem('currentUser') || '{}').name || 'Unknown',
-      receivedBranch: currentBranch.branchCode || currentBranch.id,
+      receivedBranch: (currentBranch?.branchCode || currentBranch?.id) || (manifestType === 'branch' ? (destBranch?.branchCode || destBranch?.id) : (originBranch?.branchCode || originBranch?.id)) || '',
       status: 'Received',
       receivedRemarks: ''
     };
@@ -371,15 +597,36 @@ export default function ManifestReceiveForm() {
       receiveData.receivedRemarks = remarks;
     }
 
-    allManifests[manifestIndex] = {
-      ...allManifests[manifestIndex],
+    const updatedManifest = {
+      ...manifest,
       ...receiveData
     };
 
-    localStorage.setItem('manifests', JSON.stringify(allManifests));
-    setManifests(allManifests);
-
-    alert(`✅ Manifest received successfully!\n\nManifest: ${allManifests[manifestIndex].manifestNumber}\nReceived at: ${new Date(receiveData.receivedAt).toLocaleString()}\nReceived by: ${receiveData.receivedBy}`);
+    // Save to API
+    try {
+      await apiService.updateManifest(manifestId, updatedManifest);
+      // Update local state
+      const updatedManifests = [...manifests];
+      updatedManifests[manifestIndex] = updatedManifest;
+      setManifests(updatedManifests);
+      
+      // Dispatch event to notify other components
+      window.dispatchEvent(new CustomEvent('manifestUpdated', { detail: { manifest: updatedManifest } }));
+      window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+      
+      alert(`✅ Manifest received successfully!\n\nManifest: ${updatedManifest.manifestNumber}\nReceived at: ${new Date(receiveData.receivedAt).toLocaleString()}\nReceived by: ${receiveData.receivedBy}`);
+    } catch (error) {
+      console.error('Error receiving manifest:', error);
+      alert('⚠️ Error receiving manifest. Please try again.');
+      // Fallback to localStorage
+      const allManifests = JSON.parse(localStorage.getItem('manifests') || '[]');
+      const fallbackIndex = allManifests.findIndex(m => m.id === manifestId);
+      if (fallbackIndex !== -1) {
+        allManifests[fallbackIndex] = updatedManifest;
+        localStorage.setItem('manifests', JSON.stringify(allManifests));
+        setManifests(allManifests);
+      }
+    }
   };
 
   const getCityName = (cityCode) => {
@@ -388,14 +635,8 @@ export default function ManifestReceiveForm() {
   };
 
   const getOriginBranch = (manifest) => {
-    if (manifest.branch) {
-      const branch = branches.find(b => 
-        b.id.toString() === manifest.branch || 
-        b.branchCode === manifest.branch
-      );
-      return branch;
-    }
-    return null;
+    // Use the same logic as getOriginBranchFromManifest
+    return getOriginBranchFromManifest(manifest);
   };
 
   const handleSearchManifests = () => {
@@ -480,7 +721,9 @@ export default function ManifestReceiveForm() {
   const getDriverName = (driverId) => {
     if (!driverId) return 'N/A';
     const driver = drivers.find(d => d.id.toString() === driverId.toString());
-    return driver ? driver.driverName : driverId;
+    if (!driver) return driverId;
+    // Show driverName with nickName if available
+    return driver.nickName ? `${driver.driverName} (${driver.nickName})` : driver.driverName;
   };
 
   const handlePrintManifest = (manifest) => {
@@ -634,12 +877,19 @@ export default function ManifestReceiveForm() {
       `}</style>
 
       <div className="max-w-7xl mx-auto">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-slate-800 mb-2">
-            Manifest Receive
-          </h1>
-          <p className="text-slate-600 text-lg">Receive and acknowledge manifests at destination branch</p>
-        </div>
+        {loading && (
+          <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+            Loading branches and data...
+          </div>
+        )}
+        {!loading && (
+          <>
+            <div className="text-center mb-8">
+              <h1 className="text-4xl font-bold text-slate-800 mb-2">
+                Manifest Receive
+              </h1>
+              <p className="text-slate-600 text-lg">Receive and acknowledge manifests at destination branch</p>
+            </div>
 
         {/* Branch Selection & Filters */}
         <div className="form-section">
@@ -650,14 +900,27 @@ export default function ManifestReceiveForm() {
                 <select
                   value={currentBranch?.id || ''}
                   onChange={(e) => {
-                    const branch = branches.find(b => b.id.toString() === e.target.value);
-                    setCurrentBranch(branch);
-                    // Save admin's branch selection
+                    const val = e.target.value;
+                    if (!val) {
+                      // Admin: All branches
+                      setCurrentBranch(null);
+                      localStorage.removeItem('adminSelectedBranch');
+                      try {
+                        window.dispatchEvent(new CustomEvent('adminBranchChanged', { detail: { branchId: null } }));
+                      } catch (err) {}
+                      return;
+                    }
+                    const branch = branches.find(b => b.id.toString() === val);
+                    setCurrentBranch(branch || null);
                     if (branch) {
                       localStorage.setItem('adminSelectedBranch', branch.id.toString());
+                      try {
+                        window.dispatchEvent(new CustomEvent('adminBranchChanged', { detail: { branchId: String(branch.id) } }));
+                      } catch (err) {}
                     }
                   }}
                 >
+                  <option value="">All Branches</option>
                   {branches.map(branch => (
                     <option key={branch.id} value={branch.id}>
                       {branch.branchName} ({branch.branchCode})
@@ -807,36 +1070,51 @@ export default function ManifestReceiveForm() {
                     </div>
                   )}
 
-                  {manifest.selectedLRs && manifest.selectedLRs.length > 0 && (
-                    <div style={{ marginBottom: '16px', marginTop: '16px' }}>
-                      <strong style={{ color: '#64748b', display: 'block', marginBottom: '12px' }}>
-                        LR Details - Select to Receive ({manifest.selectedLRs.length} LR{manifest.selectedLRs.length !== 1 ? 's' : ''}):
-                      </strong>
-                      <div style={{ 
-                        display: 'grid', 
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', 
-                        gap: '12px',
-                        fontSize: '0.85rem'
-                      }}>
-                        {manifest.selectedLRs.map((lr, idx) => {
-                          // Handle both object and ID references
-                          const lrData = typeof lr === 'object' ? lr : null;
-                          const lrId = lrData?.id || lr || idx;
-                          const lrNumber = lrData?.lrNumber || lrData?.id || `LR-${idx + 1}`;
-                          const expectedPieces = parseInt(lrData?.pieces || 0);
-                          const weight = lrData?.weight || 'N/A';
-                          const origin = lrData?.origin || '';
-                          const destination = lrData?.destination || '';
-                          
-                          const lrReceipt = manifest.lrReceipts?.[lrId];
-                          const isReceived = lrReceipt?.received || false;
-                          const receivedPieces = lrReceipt?.receivedPieces || expectedPieces;
-                          const hasDiscrepancy = receivedPieces !== expectedPieces;
-                          const discrepancy = lrReceipt?.discrepancy || '';
-                          const remarks = lrReceipt?.remarks || '';
-                          const vendorLRNumber = lrReceipt?.vendorLRNumber || '';
-                          
-                          return (
+                  {(() => {
+                    // Normalize selectedLRs: handle stringified JSON or direct array
+                    let lrArray = manifest.selectedLRs;
+                    if (typeof lrArray === 'string') {
+                      try {
+                        lrArray = JSON.parse(lrArray);
+                      } catch (e) {
+                        console.warn('Could not parse selectedLRs in receive form for manifest:', manifest.manifestNumber, e);
+                        lrArray = [];
+                      }
+                    }
+                    if (!Array.isArray(lrArray)) {
+                      lrArray = [];
+                    }
+                    if (lrArray.length === 0) return null;
+                    return (
+                      <div style={{ marginBottom: '16px', marginTop: '16px' }}>
+                        <strong style={{ color: '#64748b', display: 'block', marginBottom: '12px' }}>
+                          LR Details - Select to Receive ({lrArray.length} LR{lrArray.length !== 1 ? 's' : ''}):
+                        </strong>
+                        <div style={{ 
+                          display: 'grid', 
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', 
+                          gap: '12px',
+                          fontSize: '0.85rem'
+                        }}>
+                          {lrArray.map((lr, idx) => {
+                            // Handle both object and ID references safely
+                            const lrData = typeof lr === 'object' && lr !== null ? lr : null;
+                            const lrId = lrData?.id || lr || idx;
+                            const lrNumber = lrData?.lrNumber || lrData?.id || `LR-${idx + 1}`;
+                            const expectedPieces = parseInt(lrData?.pieces || 0);
+                            const weight = lrData?.weight || 'N/A';
+                            const origin = lrData?.origin || '';
+                            const destination = lrData?.destination || '';
+                            
+                            const lrReceipt = manifest.lrReceipts?.[lrId];
+                            const isReceived = lrReceipt?.received || false;
+                            const receivedPieces = lrReceipt?.receivedPieces || expectedPieces;
+                            const hasDiscrepancy = receivedPieces !== expectedPieces;
+                            const discrepancy = lrReceipt?.discrepancy || '';
+                            const remarks = lrReceipt?.remarks || '';
+                            const vendorLRNumber = lrReceipt?.vendorLRNumber || '';
+                            
+                            return (
                             <div key={idx} style={{ 
                               padding: '12px', 
                               background: isReceived ? '#ecfdf5' : '#f1f5f9', 
@@ -947,38 +1225,57 @@ export default function ManifestReceiveForm() {
                         })}
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
 
-                  {(manifest.summary || (manifest.selectedLRs && manifest.selectedLRs.length > 0)) && (
-                    <div style={{ 
-                      marginTop: '16px', 
-                      padding: '12px', 
-                      background: '#ecfdf5', 
-                      borderRadius: '8px',
-                      display: 'flex',
-                      justifyContent: 'space-around',
-                      fontSize: '0.9rem'
-                    }}>
-                      <div>
-                        <strong style={{ color: '#64748b' }}>Total Pieces:</strong>
-                        <span style={{ marginLeft: '8px', color: '#1e293b', fontWeight: 600 }}>
-                          {manifest.summary?.totalPieces || (manifest.selectedLRs?.reduce((sum, lr) => {
-                            const lrData = typeof lr === 'object' ? lr : null;
-                            return sum + (parseInt(lrData?.pieces || 0) || 0);
-                          }, 0) || 0)}
-                        </span>
+                  {(() => {
+                    // Normalize selectedLRs for summary calculations
+                    let lrArray = manifest.selectedLRs;
+                    if (typeof lrArray === 'string') {
+                      try {
+                        lrArray = JSON.parse(lrArray);
+                      } catch (e) {
+                        lrArray = [];
+                      }
+                    }
+                    if (!Array.isArray(lrArray)) {
+                      lrArray = [];
+                    }
+                    const hasLRs = lrArray.length > 0;
+                    
+                    if (!manifest.summary && !hasLRs) return null;
+                    
+                    return (
+                      <div style={{ 
+                        marginTop: '16px', 
+                        padding: '12px', 
+                        background: '#ecfdf5', 
+                        borderRadius: '8px',
+                        display: 'flex',
+                        justifyContent: 'space-around',
+                        fontSize: '0.9rem'
+                      }}>
+                        <div>
+                          <strong style={{ color: '#64748b' }}>Total Pieces:</strong>
+                          <span style={{ marginLeft: '8px', color: '#1e293b', fontWeight: 600 }}>
+                            {manifest.summary?.totalPieces || lrArray.reduce((sum, lr) => {
+                              const lrData = typeof lr === 'object' && lr !== null ? lr : null;
+                              return sum + (parseInt(lrData?.pieces || 0) || 0);
+                            }, 0)}
+                          </span>
+                        </div>
+                        <div>
+                          <strong style={{ color: '#64748b' }}>Total Weight:</strong>
+                          <span style={{ marginLeft: '8px', color: '#1e293b', fontWeight: 600 }}>
+                            {(manifest.summary?.totalWeight || lrArray.reduce((sum, lr) => {
+                              const lrData = typeof lr === 'object' && lr !== null ? lr : null;
+                              return sum + (parseFloat(lrData?.weight || 0) || 0);
+                            }, 0)).toFixed(2)} Kg
+                          </span>
+                        </div>
                       </div>
-                      <div>
-                        <strong style={{ color: '#64748b' }}>Total Weight:</strong>
-                        <span style={{ marginLeft: '8px', color: '#1e293b', fontWeight: 600 }}>
-                          {(manifest.summary?.totalWeight || manifest.selectedLRs?.reduce((sum, lr) => {
-                            const lrData = typeof lr === 'object' ? lr : null;
-                            return sum + (parseFloat(lrData?.weight || 0) || 0);
-                          }, 0) || 0).toFixed(2)} Kg
-                        </span>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {isReceived && manifest.receivedAt && (
                     <div style={{ 
@@ -1026,6 +1323,8 @@ export default function ManifestReceiveForm() {
               );
             })}
           </div>
+        )}
+          </>
         )}
       </div>
 
@@ -1537,6 +1836,17 @@ export default function ManifestReceiveForm() {
       {selectedManifestForPrint && (
         <div style={{ display: 'none' }} id="manifest-print-view">
           <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+              <img
+                src="/brand-logo.png"
+                alt="Company Logo"
+                style={{ height: '56px', width: 'auto', objectFit: 'contain' }}
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                  e.currentTarget.src = '/logo192.png';
+                }}
+              />
+            </div>
             <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '8px' }}>MANIFEST</h1>
             <div className="mono" style={{ fontSize: '1.2rem' }}>{selectedManifestForPrint.manifestNumber}</div>
             <div style={{ marginTop: '8px' }}>Date: {selectedManifestForPrint.manifestDate}</div>

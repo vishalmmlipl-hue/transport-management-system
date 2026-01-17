@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Save, BookOpen, TrendingUp, DollarSign, Trash2, Edit2 } from 'lucide-react';
+import syncService from './utils/sync-service';
+import databaseAPI from './utils/database-api';
 
 export default function AccountMaster() {
   const [accounts, setAccounts] = useState([]);
@@ -7,7 +9,7 @@ export default function AccountMaster() {
   const [editingId, setEditingId] = useState(null);
 
   // Account Groups as per Indian Accounting Standards
-  const accountGroups = [
+  const defaultAccountGroups = [
     { category: 'Assets', groups: ['Current Assets', 'Fixed Assets', 'Investments', 'Loans & Advances'] },
     { category: 'Liabilities', groups: ['Current Liabilities', 'Secured Loans', 'Unsecured Loans', 'Provisions'] },
     { category: 'Capital', groups: ['Capital Account', 'Reserves & Surplus', 'Retained Earnings'] },
@@ -15,7 +17,7 @@ export default function AccountMaster() {
     { category: 'Expenses', groups: ['Operating Expenses', 'Administrative Expenses', 'Financial Expenses', 'Salary & Wages'] }
   ];
 
-  const subGroups = {
+  const defaultSubGroups = {
     'Current Assets': ['Cash in Hand', 'Bank Accounts', 'Sundry Debtors', 'Advances', 'Stock'],
     'Fixed Assets': ['Land & Building', 'Vehicles', 'Furniture & Fixtures', 'Office Equipment'],
     'Current Liabilities': ['Sundry Creditors', 'Outstanding Expenses', 'Duties & Taxes'],
@@ -30,13 +32,42 @@ export default function AccountMaster() {
     'Bank Accounts': ['Current Account', 'Savings Account', 'Cash Credit Account']
   };
 
+  // Custom classifications (user-defined groups/sub-groups)
+  const [customClassifications, setCustomClassifications] = useState(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('accountClassifications') || 'null');
+      return parsed || { groupsByCategory: {}, subGroupsByGroup: {} };
+    } catch {
+      return { groupsByCategory: {}, subGroupsByGroup: {} };
+    }
+  });
+
   useEffect(() => {
     loadAccounts();
   }, []);
 
-  const loadAccounts = () => {
-    const storedAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
-    setAccounts(storedAccounts);
+  const loadAccounts = async () => {
+    try {
+      const result = await syncService.load('accounts');
+      const all = Array.isArray(result) ? result : (result?.data || []);
+      const parsed = (all || []).map(acc => {
+        if (acc?.data && typeof acc.data === 'string') {
+          try {
+            const d = JSON.parse(acc.data);
+            return { ...acc, ...d };
+          } catch {
+            return acc;
+          }
+        }
+        return acc;
+      });
+      setAccounts(parsed);
+      localStorage.setItem('accountMaster', JSON.stringify(parsed));
+    } catch (err) {
+      console.error('Error loading accounts:', err);
+      const fallback = JSON.parse(localStorage.getItem('accountMaster') || '[]');
+      setAccounts(fallback);
+    }
   };
 
   const [formData, setFormData] = useState({
@@ -56,10 +87,9 @@ export default function AccountMaster() {
     status: 'Active'
   });
 
-  // Auto-create ledgers when entities are created
-  useEffect(() => {
-    createAutoLedgers();
-  }, []);
+  // NOTE: Auto-ledger creation currently relies on localStorage-only masters.
+  // Keeping it disabled here prevents accidental divergence from server accounts.
+  // If needed, we can re-introduce it using server-first reads/writes.
 
   const createAutoLedgers = () => {
     const existingAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
@@ -322,32 +352,42 @@ export default function AccountMaster() {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    const existingAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
-    
+
+    const payload = {
+      accountName: formData.accountName,
+      accountCode: formData.accountCode,
+      accountType: formData.category || 'Expenses',
+      parentAccount: formData.group || '',
+      balance: formData.openingBalance || '0',
+      status: formData.status || 'Active',
+      createdAt: formData.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      // Store full classification + extra info in data JSON
+      data: JSON.stringify({
+        ...formData,
+        category: formData.category,
+        group: formData.group,
+        subGroup: formData.subGroup,
+        openingBalance: formData.openingBalance,
+        balanceType: formData.balanceType,
+      })
+    };
+
     if (editingId) {
-      // Update existing
-      const updated = existingAccounts.map(acc => 
-        acc.id === editingId ? { ...formData, id: editingId } : acc
-      );
-      localStorage.setItem('accountMaster', JSON.stringify(updated));
-      setAccounts(updated);
+      const res = await syncService.save('accounts', payload, true, editingId);
+      if (res && res.success === false) throw new Error(res.error || 'Update failed');
       setEditingId(null);
     } else {
-      // Create new
-      const newAccount = {
-        id: Date.now(),
-        ...formData,
-        autoCreated: false,
-        createdAt: new Date().toISOString()
-      };
-      
-      existingAccounts.push(newAccount);
-      localStorage.setItem('accountMaster', JSON.stringify(existingAccounts));
-      setAccounts(existingAccounts);
+      // Create new (never send id)
+      const createPayload = { ...payload };
+      delete createPayload.id;
+      const res = await syncService.save('accounts', createPayload, false, null);
+      if (res && res.success === false) throw new Error(res.error || 'Create failed');
     }
+
+    await loadAccounts();
 
     setShowSuccessMessage(true);
     setTimeout(() => setShowSuccessMessage(false), 3000);
@@ -381,21 +421,185 @@ export default function AccountMaster() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const deleteAccount = (id) => {
+  const deleteAccount = async (id) => {
     if (window.confirm('Are you sure you want to delete this account?')) {
-      const updated = accounts.filter(acc => acc.id !== id);
-      localStorage.setItem('accountMaster', JSON.stringify(updated));
-      setAccounts(updated);
+      try {
+        await databaseAPI.delete('accounts', id);
+      } catch (err) {
+        console.error('Account delete failed:', err);
+      }
+      await loadAccounts();
     }
   };
 
   const getAvailableGroups = () => {
-    const category = accountGroups.find(c => c.category === formData.category);
-    return category ? category.groups : [];
+    const category = defaultAccountGroups.find(c => c.category === formData.category);
+    const base = category ? category.groups : [];
+    const custom = customClassifications.groupsByCategory?.[formData.category] || [];
+    return Array.from(new Set([...(base || []), ...(custom || [])]));
   };
 
   const getAvailableSubGroups = () => {
-    return subGroups[formData.group] || [];
+    const base = defaultSubGroups[formData.group] || [];
+    const custom = customClassifications.subGroupsByGroup?.[formData.group] || [];
+    return Array.from(new Set([...(base || []), ...(custom || [])]));
+  };
+
+  const persistClassifications = (next) => {
+    setCustomClassifications(next);
+    localStorage.setItem('accountClassifications', JSON.stringify(next));
+  };
+
+  const addCustomGroup = () => {
+    if (!formData.category) {
+      alert('⚠️ Please select Category first.');
+      return;
+    }
+    const name = window.prompt('Enter new Group name');
+    if (!name) return;
+    const groupName = name.trim();
+    if (!groupName) return;
+    const existing = customClassifications.groupsByCategory?.[formData.category] || [];
+    if (existing.some(g => g.toLowerCase() === groupName.toLowerCase())) {
+      alert('⚠️ This Group already exists.');
+      return;
+    }
+    const next = {
+      ...customClassifications,
+      groupsByCategory: {
+        ...(customClassifications.groupsByCategory || {}),
+        [formData.category]: [...existing, groupName]
+      }
+    };
+    persistClassifications(next);
+    setFormData(prev => ({ ...prev, group: groupName, subGroup: '' }));
+  };
+
+  const editCustomGroup = async () => {
+    if (!formData.category || !formData.group) {
+      alert('⚠️ Please select Category and Group first.');
+      return;
+    }
+    const existing = customClassifications.groupsByCategory?.[formData.category] || [];
+    const isCustom = existing.some(g => g.toLowerCase() === String(formData.group).toLowerCase());
+    if (!isCustom) {
+      alert('⚠️ Only custom Groups can be edited. (Default groups are fixed)');
+      return;
+    }
+    const name = window.prompt('Rename Group to:', formData.group);
+    if (!name) return;
+    const newName = name.trim();
+    if (!newName) return;
+    const nextGroups = existing.map(g => (g.toLowerCase() === String(formData.group).toLowerCase() ? newName : g));
+    const next = {
+      ...customClassifications,
+      groupsByCategory: {
+        ...(customClassifications.groupsByCategory || {}),
+        [formData.category]: nextGroups
+      }
+    };
+    // Move any custom sub-groups attached to old group
+    const oldGroup = formData.group;
+    const sg = { ...(customClassifications.subGroupsByGroup || {}) };
+    if (sg[oldGroup]) {
+      sg[newName] = sg[oldGroup];
+      delete sg[oldGroup];
+      next.subGroupsByGroup = sg;
+    }
+    persistClassifications(next);
+
+    // Update existing accounts with old group
+    const toUpdate = (accounts || []).filter(a => (a.group || a.parentAccount) === oldGroup);
+    for (const acc of toUpdate) {
+      const updatedData = {
+        ...acc,
+        group: newName,
+        parentAccount: newName,
+        updatedAt: new Date().toISOString()
+      };
+      const payload = {
+        accountName: acc.accountName,
+        accountCode: acc.accountCode,
+        accountType: acc.accountType || acc.category || formData.category,
+        parentAccount: newName,
+        balance: acc.balance || acc.openingBalance || '0',
+        status: acc.status || 'Active',
+        updatedAt: new Date().toISOString(),
+        data: JSON.stringify({ ...acc, group: newName, parentAccount: newName })
+      };
+      await syncService.save('accounts', payload, true, acc.id);
+    }
+    await loadAccounts();
+    setFormData(prev => ({ ...prev, group: newName, subGroup: '' }));
+  };
+
+  const addCustomSubGroup = () => {
+    if (!formData.group) {
+      alert('⚠️ Please select Group first.');
+      return;
+    }
+    const name = window.prompt('Enter new Sub-Group name');
+    if (!name) return;
+    const subName = name.trim();
+    if (!subName) return;
+    const existing = customClassifications.subGroupsByGroup?.[formData.group] || [];
+    if (existing.some(s => s.toLowerCase() === subName.toLowerCase())) {
+      alert('⚠️ This Sub-Group already exists.');
+      return;
+    }
+    const next = {
+      ...customClassifications,
+      subGroupsByGroup: {
+        ...(customClassifications.subGroupsByGroup || {}),
+        [formData.group]: [...existing, subName]
+      }
+    };
+    persistClassifications(next);
+    setFormData(prev => ({ ...prev, subGroup: subName }));
+  };
+
+  const editCustomSubGroup = async () => {
+    if (!formData.group || !formData.subGroup) {
+      alert('⚠️ Please select Group and Sub-Group first.');
+      return;
+    }
+    const existing = customClassifications.subGroupsByGroup?.[formData.group] || [];
+    const isCustom = existing.some(s => s.toLowerCase() === String(formData.subGroup).toLowerCase());
+    if (!isCustom) {
+      alert('⚠️ Only custom Sub-Groups can be edited. (Default sub-groups are fixed)');
+      return;
+    }
+    const name = window.prompt('Rename Sub-Group to:', formData.subGroup);
+    if (!name) return;
+    const newName = name.trim();
+    if (!newName) return;
+    const oldName = formData.subGroup;
+    const nextSubs = existing.map(s => (s.toLowerCase() === String(oldName).toLowerCase() ? newName : s));
+    const next = {
+      ...customClassifications,
+      subGroupsByGroup: {
+        ...(customClassifications.subGroupsByGroup || {}),
+        [formData.group]: nextSubs
+      }
+    };
+    persistClassifications(next);
+
+    const toUpdate = (accounts || []).filter(a => (a.group || a.parentAccount) === formData.group && a.subGroup === oldName);
+    for (const acc of toUpdate) {
+      const payload = {
+        accountName: acc.accountName,
+        accountCode: acc.accountCode,
+        accountType: acc.accountType || acc.category,
+        parentAccount: acc.parentAccount || acc.group,
+        balance: acc.balance || acc.openingBalance || '0',
+        status: acc.status || 'Active',
+        updatedAt: new Date().toISOString(),
+        data: JSON.stringify({ ...acc, subGroup: newName })
+      };
+      await syncService.save('accounts', payload, true, acc.id);
+    }
+    await loadAccounts();
+    setFormData(prev => ({ ...prev, subGroup: newName }));
   };
 
   // Group accounts by category
@@ -652,7 +856,7 @@ export default function AccountMaster() {
                   required
                 >
                   <option value="">-- Select Category --</option>
-                  {accountGroups.map(cat => (
+                  {defaultAccountGroups.map(cat => (
                     <option key={cat.category} value={cat.category}>{cat.category}</option>
                   ))}
                 </select>
@@ -675,6 +879,14 @@ export default function AccountMaster() {
                     <option key={group} value={group}>{group}</option>
                   ))}
                 </select>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button type="button" className="btn btn-secondary" onClick={addCustomGroup} disabled={!formData.category} style={{ padding: '8px 10px' }}>
+                    + Add Group
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={editCustomGroup} disabled={!formData.category || !formData.group} style={{ padding: '8px 10px' }}>
+                    <Edit2 size={16} /> Edit
+                  </button>
+                </div>
               </div>
               
               <div className="input-group">
@@ -689,6 +901,14 @@ export default function AccountMaster() {
                     <option key={subGroup} value={subGroup}>{subGroup}</option>
                   ))}
                 </select>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button type="button" className="btn btn-secondary" onClick={addCustomSubGroup} disabled={!formData.group} style={{ padding: '8px 10px' }}>
+                    + Add Sub-Group
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={editCustomSubGroup} disabled={!formData.group || !formData.subGroup} style={{ padding: '8px 10px' }}>
+                    <Edit2 size={16} /> Edit
+                  </button>
+                </div>
               </div>
             </div>
           </div>

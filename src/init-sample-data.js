@@ -1,8 +1,29 @@
 // Sample Data Initialization Script
-// This script populates Render.com API with sample data (NOT localStorage)
+// This script populates API with sample data (NOT localStorage)
 // Only runs if server has no data
+// Uses correct API based on domain (mmlipl.in → Hostinger, mmlipl.info → Render.com)
 
-const API_BASE_URL = 'https://transport-management-system-wzhx.onrender.com/api';
+// Get API URL based on current domain
+const getAPIBaseURL = () => {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    
+    // mmlipl.in → Use Hostinger API
+    if (hostname === 'mmlipl.in' || hostname === 'www.mmlipl.in') {
+      return 'https://mmlipl.in/api';
+    }
+    
+    // mmlipl.info → Use Render.com API
+    if (hostname === 'mmlipl.info' || hostname === 'www.mmlipl.info') {
+      return 'https://transport-management-system-wzhx.onrender.com/api';
+    }
+  }
+  
+  // Default to Render.com for development
+  return 'https://transport-management-system-wzhx.onrender.com/api';
+};
+
+const API_BASE_URL = getAPIBaseURL();
 
 const initSampleData = async () => {
   console.log('Initializing sample data...');
@@ -223,16 +244,32 @@ const initSampleData = async () => {
     { id: 101, code: 'MP-KHG', cityName: 'Khargone', state: 'Madhya Pradesh', region: 'Central', zone: 'Central', pincodeRanges: '451001-451001', isODA: false, distanceFromHub: '490', transitDays: '1', status: 'Active', createdAt: new Date('2024-01-10').toISOString() }
   ];
   
-  // Save cities to Render.com API (not localStorage)
+  // Save cities to API (not localStorage)
   try {
+    let savedCount = 0;
     for (const city of cities) {
-      await fetch(`${API_BASE_URL}/cities`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(city)
-      });
+      try {
+        const response = await fetch(`${API_BASE_URL}/cities`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(city)
+        });
+        if (response.ok) {
+          savedCount++;
+        } else {
+          // Skip if city already exists or other error
+          const errorData = await response.json().catch(() => ({}));
+          if (response.status !== 500) {
+            // Non-500 errors might be expected (duplicate, etc.)
+            console.warn(`Skipped city ${city.cityName}:`, errorData.message || response.status);
+          }
+        }
+      } catch (err) {
+        // Skip individual city errors, continue with others
+        console.warn(`Error saving city ${city.cityName}:`, err.message);
+      }
     }
-    console.log(`✅ Saved ${cities.length} cities to Render.com`);
+    console.log(`✅ Saved ${savedCount}/${cities.length} cities to server`);
   } catch (error) {
     console.error('❌ Error saving cities to server:', error);
   }
@@ -1202,7 +1239,8 @@ if (typeof window !== 'undefined') {
         // Server has no data - initialize sample data
         console.log('📤 Server has no data. Initializing sample data...');
         await initSampleData();
-        alert('✅ Sample data initialized on Render.com server!\n\nAll browsers will see the same data.\n\nLogin credentials:\n- admin / admin123\n- manager / manager123\n- operator / operator123\n- accountant / accountant123\n- driver / driver123');
+        const apiName = window.location.hostname === 'mmlipl.in' ? 'Hostinger' : 'Render.com';
+        alert(`✅ Sample data initialized on ${apiName} server!\n\nAll browsers will see the same data.\n\nLogin credentials:\n- admin / admin123\n- manager / manager123\n- operator / operator123\n- accountant / accountant123\n- driver / driver123`);
       } else {
         console.log(`✅ Server already has ${result.data.length} branches. Skipping sample data.`);
       }

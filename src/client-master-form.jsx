@@ -1,8 +1,14 @@
-import React, { useState } from 'react';
-import { tbbClientsService, clientsService } from './services/dataService';
-import { Save, Plus, Trash2, User } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { clientsService } from './services/dataService';
+import { apiService } from './utils/apiService';
+import { Save, Plus, Trash2, User, Edit2, Eye, X } from 'lucide-react';
 
 export default function ClientMasterForm() {
+  const [clients, setClients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [viewingId, setViewingId] = useState(null);
+  const [showClientList, setShowClientList] = useState(true);
   const [formData, setFormData] = useState({
     clientCode: '',
     clientType: 'TBB',
@@ -46,12 +52,296 @@ export default function ClientMasterForm() {
 
   const [showAdditionalContact, setShowAdditionalContact] = useState(false);
 
+  const normalizeClient = (c) => {
+    if (!c) return c;
+    return {
+      ...c,
+      // unify code/name across possible schemas
+      code: c.code || c.clientCode || c.client_code || c.clientCode,
+      clientCode: c.clientCode || c.code || c.client_code,
+      companyName: c.companyName || c.clientName || c.client_name || c.clientName,
+      clientName: c.clientName || c.companyName || c.client_name,
+    };
+  };
+
+  // Auto-generate next Client Code (not DB id) from existing list
+  const generateNextClientCode = (list) => {
+    const clientsList = Array.isArray(list) ? list : [];
+    // This screen is for TBB clients primarily; match existing sample codes like TBB001
+    let bestPrefix = 'TBB';
+    let bestNum = 0;
+    let bestPad = 3;
+
+    for (const c of clientsList) {
+      const raw = (c?.clientCode || c?.code || '').toString().trim().toUpperCase();
+      if (!raw) continue;
+
+      const m = raw.match(/^([A-Z]+)(\d+)$/);
+      if (m) {
+        const prefix = m[1];
+        const num = parseInt(m[2], 10);
+        if (!Number.isNaN(num) && num >= bestNum) {
+          bestPrefix = prefix;
+          bestNum = num;
+          bestPad = m[2].length || bestPad;
+        }
+      } else {
+        const onlyNum = parseInt(raw, 10);
+        if (!Number.isNaN(onlyNum) && onlyNum >= bestNum) {
+          bestNum = onlyNum;
+        }
+      }
+    }
+
+    const next = bestNum + 1;
+    return `${bestPrefix}${String(next).padStart(bestPad, '0')}`;
+  };
+
+  const buildEmptyFormData = (prefillClientCode) => ({
+    clientCode: prefillClientCode || '',
+    clientType: 'TBB',
+    companyName: '',
+    tradeName: '',
+    address: {
+      line1: '',
+      line2: '',
+      city: '',
+      state: '',
+      pincode: '',
+      country: 'India'
+    },
+    primaryContact: {
+      name: '',
+      designation: '',
+      mobile: '',
+      phone: '',
+      email: ''
+    },
+    additionalContacts: [],
+    gstNumber: '',
+    isUnregisteredPerson: false,
+    panNumber: '',
+    bankDetails: {
+      accountName: '',
+      accountNumber: '',
+      bankName: '',
+      branch: '',
+      ifscCode: ''
+    },
+    billingDetails: {
+      creditLimit: '',
+      creditDays: '',
+      paymentTerms: 'Net 30'
+    },
+    deliveryType: 'Godown', // Default delivery type for TBB clients: 'Godown' or 'Door'
+    status: 'Active',
+    remarks: ''
+  });
+
+  // Load clients from API
+  useEffect(() => {
+    const loadClients = async () => {
+      try {
+        setLoading(true);
+        const clientsData = await apiService.getClients();
+        setClients((clientsData || []).map(normalizeClient));
+      } catch (error) {
+        console.error('Error loading clients:', error);
+        // Fallback to dataService
+        try {
+          const fallbackData = await clientsService.getAll();
+          const list = Array.isArray(fallbackData) ? fallbackData : (fallbackData?.data || []);
+          setClients((list || []).map(normalizeClient));
+        } catch (err) {
+          console.error('Fallback also failed:', err);
+          setClients([]);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadClients();
+  }, []);
+
+  // Reset form
+  const resetForm = (options = {}) => {
+    const nextCode = options.clientCode || generateNextClientCode(clients);
+    setFormData(buildEmptyFormData(nextCode));
+    setEditingId(null);
+    setViewingId(null);
+    setShowAdditionalContact(false);
+  };
+
+  // Ensure Client Code is filled when opening Create form (even if clients load later)
+  useEffect(() => {
+    if (showClientList) return;
+    if (editingId || viewingId) return;
+    const current = (formData?.clientCode || '').toString().trim();
+    if (current) return;
+    setFormData(prev => ({ ...prev, clientCode: generateNextClientCode(clients) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showClientList, editingId, viewingId, clients]);
+
+  // Load client data into form for editing
+  const handleEdit = (client) => {
+    // Parse JSON fields if they're strings
+    const address = typeof client.address === 'string' ? JSON.parse(client.address || '{}') : (client.address || {});
+    const primaryContact = typeof client.primaryContact === 'string' ? JSON.parse(client.primaryContact || '{}') : (client.primaryContact || {});
+    const additionalContacts = typeof client.additionalContacts === 'string' ? JSON.parse(client.additionalContacts || '[]') : (client.additionalContacts || []);
+    const bankDetails = typeof client.bankDetails === 'string' ? JSON.parse(client.bankDetails || '{}') : (client.bankDetails || {});
+    const billingDetails = typeof client.billingDetails === 'string' ? JSON.parse(client.billingDetails || '{}') : (client.billingDetails || {});
+
+    setFormData({
+      clientCode: client.clientCode || client.code || '',
+      clientType: client.clientType || 'TBB',
+      companyName: client.companyName || client.clientName || '',
+      tradeName: client.tradeName || '',
+      address: {
+        line1: address.line1 || '',
+        line2: address.line2 || '',
+        city: address.city || '',
+        state: address.state || '',
+        pincode: address.pincode || '',
+        country: address.country || 'India'
+      },
+      primaryContact: {
+        name: primaryContact.name || '',
+        designation: primaryContact.designation || '',
+        mobile: primaryContact.mobile || '',
+        phone: primaryContact.phone || '',
+        email: primaryContact.email || ''
+      },
+      additionalContacts: additionalContacts || [],
+      gstNumber: client.gstNumber || '',
+      isUnregisteredPerson: client.gstNumber === 'URP' || client.isUnregisteredPerson || false,
+      panNumber: client.panNumber || '',
+      bankDetails: {
+        accountName: bankDetails.accountName || '',
+        accountNumber: bankDetails.accountNumber || '',
+        bankName: bankDetails.bankName || '',
+        branch: bankDetails.branch || '',
+        ifscCode: bankDetails.ifscCode || ''
+      },
+      billingDetails: {
+        creditLimit: billingDetails.creditLimit || '',
+        creditDays: billingDetails.creditDays || '',
+        paymentTerms: billingDetails.paymentTerms || 'Net 30'
+      },
+      deliveryType: client.deliveryType || 'Godown',
+      status: client.status || 'Active',
+      remarks: client.remarks || ''
+    });
+    setEditingId(client.id);
+    setViewingId(null);
+    setShowClientList(false);
+    // Scroll to form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // View client details
+  const handleView = (client) => {
+    setViewingId(client.id);
+    setEditingId(null);
+    setShowClientList(false);
+  };
+
+  // Delete client with dependency checking
+  const handleDelete = async (clientId, clientName) => {
+    try {
+      // Check dependencies first
+      const depsResult = await apiService.checkClientDependencies(clientId);
+      
+      if (depsResult.hasDependencies && depsResult.totalCount > 0) {
+        const deps = depsResult.dependencies;
+        const depsList = [
+          deps.lrBookings.length > 0 && `${deps.lrBookings.length} LR Booking(s)`,
+          deps.ftlLRBookings.length > 0 && `${deps.ftlLRBookings.length} FTL LR Booking(s)`,
+          deps.ptlLRBookings.length > 0 && `${deps.ptlLRBookings.length} PTL LR Booking(s)`,
+          deps.invoices.length > 0 && `${deps.invoices.length} Invoice(s)`,
+          deps.clientRates.length > 0 && `${deps.clientRates.length} Client Rate(s)`,
+          deps.payments.length > 0 && `${deps.payments.length} Payment(s)`
+        ].filter(Boolean).join(', ');
+
+        const confirmMessage = `⚠️ Client "${clientName}" has ${depsResult.totalCount} dependency(ies):\n\n${depsList}\n\nDo you want to delete this client and clear all references?\n\nThis will:\n- Remove client from all LR bookings (consignor/consignee)\n- Delete all client rates\n- Mark client as [DELETED] in invoices and payments\n\nThis action cannot be undone!`;
+        
+        if (!window.confirm(confirmMessage)) {
+          return;
+        }
+
+        // Delete with clearing references
+        const deleteResult = await apiService.deleteClientWithDependencies(clientId, true);
+        
+        // Refresh client list
+        const clientsData = await apiService.getClients();
+        setClients((clientsData || []).map(normalizeClient));
+        
+        // Dispatch event to refresh other forms
+        window.dispatchEvent(new Event('clientDataUpdated'));
+        
+        alert(`✅ Client "${clientName}" deleted successfully!\n\nCleared references:\n${depsList}`);
+      } else {
+        // No dependencies, simple delete
+        if (!window.confirm(`Are you sure you want to delete client "${clientName}"?\n\nThis action cannot be undone.`)) {
+          return;
+        }
+
+        await apiService.deleteClient(clientId);
+        
+        // Refresh client list
+        const clientsData = await apiService.getClients();
+        setClients(clientsData || []);
+        
+        // Dispatch event to refresh other forms
+        window.dispatchEvent(new Event('clientDataUpdated'));
+        
+        alert(`✅ Client "${clientName}" deleted successfully!`);
+      }
+    } catch (error) {
+      console.error('Error deleting client:', error);
+      const errorMsg = error.message || 'Unknown error';
+      if (errorMsg.includes('dependencies')) {
+        alert(`❌ Cannot delete client: ${errorMsg}\n\nPlease clear all references first or use "Delete with References" option.`);
+      } else {
+        alert(`❌ Error deleting client: ${errorMsg}`);
+      }
+    }
+  };
+
+  // Suspend / Activate client (status update)
+  const handleToggleSuspend = async (client) => {
+    try {
+      const currentStatus = (client.status || 'Active').toString();
+      const nextStatus = currentStatus === 'Active' ? 'Suspended' : 'Active';
+
+      const msg =
+        nextStatus === 'Suspended'
+          ? `Suspend client "${client.companyName || client.code}"?\n\nClient will not be available for new selections (recommended).`
+          : `Activate client "${client.companyName || client.code}"?`;
+
+      if (!window.confirm(msg)) return;
+
+      await apiService.updateClient(client.id, { ...client, status: nextStatus, updatedAt: new Date().toISOString() });
+
+      // Refresh client list
+      const clientsData = await apiService.getClients();
+      setClients((clientsData || []).map(normalizeClient));
+
+      window.dispatchEvent(new Event('clientDataUpdated'));
+      alert(`✅ Client "${client.companyName || client.code}" is now ${nextStatus}.`);
+    } catch (error) {
+      console.error('Error updating client status:', error);
+      alert(`❌ Error updating status: ${error.message || 'Unknown error'}`);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     // Create new client object
     const newClient = {
       code: formData.clientCode,
+      clientCode: formData.clientCode,
       companyName: formData.companyName,
+      clientName: formData.companyName,
       tradeName: formData.tradeName,
       address: formData.address,
       primaryContact: formData.primaryContact,
@@ -67,18 +357,56 @@ export default function ClientMasterForm() {
       createdAt: new Date().toISOString()
     };
     try {
-      // Save to backend (TBB clients table)
-      const tbbResp = await tbbClientsService.create(newClient);
-      console.log('TBB Client API response:', tbbResp);
-      // Also save to clients table for sundry creditors
-      const clientsResp = await clientsService.create(newClient);
-      console.log('Clients API response:', clientsResp);
-      window.dispatchEvent(new Event('clientDataUpdated'));
-      alert(`Client "${formData.companyName}" created successfully!\n\nClient Code: ${newClient.code}\n\nThis client is now available for selection in LR booking forms.`);
-      window.location.reload();
+      if (editingId) {
+        // Get old client data to check if code/name changed
+        const oldClient = clients.find(c => c.id === editingId);
+        const oldClientCode = oldClient?.clientCode || oldClient?.code;
+        const oldCompanyName = oldClient?.companyName;
+        const newClientCode = newClient.code;
+        const newCompanyName = newClient.companyName;
+
+        // If client code or name changed, update with references
+        if (oldClientCode !== newClientCode || oldCompanyName !== newCompanyName) {
+          await apiService.updateClientWithReferences(editingId, newClient);
+        } else {
+          // Simple update if code/name didn't change
+          await apiService.updateClient(editingId, newClient);
+        }
+        
+        // Dispatch event to refresh other forms
+        window.dispatchEvent(new Event('clientDataUpdated'));
+        
+        alert(`✅ Client "${formData.companyName}" updated successfully!${(oldClientCode !== newClientCode || oldCompanyName !== newCompanyName) ? '\n\nAll references in LR bookings, invoices, and payments have been updated.' : ''}`);
+        
+        // Refresh client list
+        const clientsData = await apiService.getClients();
+        const normalizedList = (clientsData || []).map(normalizeClient);
+        setClients(normalizedList);
+        resetForm({ clientCode: generateNextClientCode(normalizedList) });
+        setShowClientList(true);
+      } else {
+        // Create new client
+        try {
+          const created = await apiService.createClient(newClient);
+          console.log('Client API response:', created);
+        } catch (primaryError) {
+          console.warn('apiService create failed, using clientsService fallback:', primaryError);
+          const clientsResp = await clientsService.create(newClient);
+          console.log('ClientsService API response:', clientsResp);
+        }
+        window.dispatchEvent(new Event('clientDataUpdated'));
+        alert(`✅ Client "${formData.companyName}" created successfully!\n\nClient Code: ${newClient.code}\n\nThis client is now available for selection in LR booking forms.`);
+        
+        // Refresh client list
+        const clientsData = await apiService.getClients();
+        const normalizedList = (clientsData || []).map(normalizeClient);
+        setClients(normalizedList);
+        resetForm({ clientCode: generateNextClientCode(normalizedList) });
+        setShowClientList(true);
+      }
     } catch (err) {
-      alert('Error creating client: ' + err.message);
-      console.error('Client creation error:', err);
+      alert('❌ Error saving client: ' + err.message);
+      console.error('Client save error:', err);
     }
   };
 
@@ -304,7 +632,277 @@ export default function ClientMasterForm() {
           <p className="text-slate-600 text-lg">TBB Client Management System</p>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        {/* Client List View */}
+        {showClientList && !editingId && !viewingId && (
+          <div className="form-section">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 className="section-title" style={{ marginBottom: 0, paddingBottom: 0, border: 'none' }}>
+                Clients List ({clients.length})
+              </h2>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  resetForm();
+                  setShowClientList(false);
+                }}
+              >
+                <Plus size={16} /> Add New Client
+              </button>
+            </div>
+
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                Loading clients...
+              </div>
+            ) : clients.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                <p>No clients found. Click "Add New Client" to create one.</p>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                      <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, color: '#475569' }}>ID</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, color: '#475569' }}>Code</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, color: '#475569' }}>Company Name</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, color: '#475569' }}>Type</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, color: '#475569' }}>Contact</th>
+                      <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, color: '#475569' }}>Status</th>
+                      <th style={{ padding: '12px', textAlign: 'center', fontWeight: 600, color: '#475569' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clients.map((client) => {
+                      const primaryContact = typeof client.primaryContact === 'string' 
+                        ? JSON.parse(client.primaryContact || '{}') 
+                        : (client.primaryContact || {});
+                      const contactMobile =
+                        primaryContact.mobile ||
+                        primaryContact.phone ||
+                        client.mobile ||
+                        client.phone ||
+                        'N/A';
+                      return (
+                        <tr key={client.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                          <td style={{ padding: '12px', fontFamily: 'monospace', fontWeight: 600, color: '#475569' }}>
+                            {client.id ?? '—'}
+                          </td>
+                          <td style={{ padding: '12px', fontFamily: 'monospace', fontWeight: 600 }}>
+                            {client.clientCode || client.code || 'N/A'}
+                          </td>
+                          <td style={{ padding: '12px', fontWeight: 500 }}>
+                            {client.companyName || client.clientName || 'N/A'}
+                          </td>
+                          <td style={{ padding: '12px' }}>
+                            <span style={{
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              fontSize: '0.75rem',
+                              fontWeight: 600,
+                              background: client.clientType === 'TBB' ? '#dbeafe' : '#f3f4f6',
+                              color: client.clientType === 'TBB' ? '#1e40af' : '#374151'
+                            }}>
+                              {client.clientType || 'TBB'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px', fontSize: '0.9rem', color: '#64748b' }}>
+                            {contactMobile}
+                          </td>
+                          <td style={{ padding: '12px' }}>
+                            <span className={`status-badge ${client.status === 'Active' ? 'status-active' : 'status-inactive'}`}>
+                              {client.status || 'Active'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={() => handleView(client)}
+                                style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                                title="View Details"
+                              >
+                                <Eye size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={() => handleEdit(client)}
+                                style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                                title="Edit"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={() => handleToggleSuspend(client)}
+                                style={{
+                                  padding: '6px 12px',
+                                  fontSize: '0.85rem',
+                                  background: (client.status || 'Active') === 'Active' ? '#fef3c7' : '#dcfce7',
+                                  borderColor: (client.status || 'Active') === 'Active' ? '#f59e0b' : '#22c55e',
+                                  color: (client.status || 'Active') === 'Active' ? '#92400e' : '#166534'
+                                }}
+                                title={(client.status || 'Active') === 'Active' ? 'Suspend' : 'Activate'}
+                              >
+                                {(client.status || 'Active') === 'Active' ? 'Suspend' : 'Activate'}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-danger"
+                                onClick={() => handleDelete(client.id, client.companyName || client.code)}
+                                style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                                title="Delete"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* View Client Modal */}
+        {viewingId && (
+          <div className="form-section">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 className="section-title" style={{ marginBottom: 0, paddingBottom: 0, border: 'none' }}>
+                Client Details
+              </h2>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setViewingId(null);
+                  setShowClientList(true);
+                }}
+              >
+                <X size={16} /> Close
+              </button>
+            </div>
+            {(() => {
+              const client = clients.find(c => c.id === viewingId);
+              if (!client) return <div>Client not found</div>;
+              
+              const address = typeof client.address === 'string' ? JSON.parse(client.address || '{}') : (client.address || {});
+              const primaryContact = typeof client.primaryContact === 'string' ? JSON.parse(client.primaryContact || '{}') : (client.primaryContact || {});
+              const billingDetails = typeof client.billingDetails === 'string' ? JSON.parse(client.billingDetails || '{}') : (client.billingDetails || {});
+              
+              return (
+                <div>
+                  <div className="grid-4" style={{ marginBottom: '20px' }}>
+                    <div>
+                      <strong style={{ color: '#64748b', fontSize: '0.875rem' }}>Client ID:</strong>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 600, marginTop: '4px', fontFamily: 'monospace' }}>
+                        {client.id ?? '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <strong style={{ color: '#64748b', fontSize: '0.875rem' }}>Client Code:</strong>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 600, marginTop: '4px' }}>
+                        {client.clientCode || client.code || 'N/A'}
+                      </div>
+                    </div>
+                    <div>
+                      <strong style={{ color: '#64748b', fontSize: '0.875rem' }}>Company Name:</strong>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 600, marginTop: '4px' }}>
+                        {client.companyName || client.clientName || 'N/A'}
+                      </div>
+                    </div>
+                    <div>
+                      <strong style={{ color: '#64748b', fontSize: '0.875rem' }}>Status:</strong>
+                      <div style={{ marginTop: '4px' }}>
+                        <span className={`status-badge ${client.status === 'Active' ? 'status-active' : 'status-inactive'}`}>
+                          {client.status || 'Active'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div style={{ marginTop: '20px' }}>
+                    <strong style={{ color: '#1e293b', fontSize: '1rem' }}>Address:</strong>
+                    <div style={{ marginTop: '8px', color: '#475569' }}>
+                      {address.line1 && <div>{address.line1}</div>}
+                      {address.line2 && <div>{address.line2}</div>}
+                      <div>{[address.city, address.state, address.pincode].filter(Boolean).join(', ')}</div>
+                      {address.country && <div>{address.country}</div>}
+                    </div>
+                  </div>
+                  
+                  <div style={{ marginTop: '20px' }}>
+                    <strong style={{ color: '#1e293b', fontSize: '1rem' }}>Primary Contact:</strong>
+                    <div style={{ marginTop: '8px', color: '#475569' }}>
+                      <div>{primaryContact.name || 'N/A'}</div>
+                      {primaryContact.designation && <div style={{ fontSize: '0.9rem', color: '#64748b' }}>{primaryContact.designation}</div>}
+                      <div>{primaryContact.mobile || primaryContact.phone || 'N/A'}</div>
+                      <div>{primaryContact.email || 'N/A'}</div>
+                    </div>
+                  </div>
+                  
+                  <div style={{ marginTop: '20px', display: 'flex', gap: '20px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => handleEdit(client)}
+                    >
+                      <Edit2 size={16} /> Edit Client
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        setViewingId(null);
+                        setShowClientList(true);
+                      }}
+                    >
+                      Back to List
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Form for Create/Edit */}
+        {(!showClientList || editingId) && (
+          <form onSubmit={handleSubmit}>
+            {editingId && (
+              <div style={{
+                background: '#fef3c7',
+                border: '2px solid #fbbf24',
+                borderRadius: '8px',
+                padding: '12px 16px',
+                marginBottom: '20px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <span style={{ color: '#92400e', fontWeight: 600 }}>
+                  ✏️ Editing Client: {formData.companyName || 'N/A'}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    resetForm();
+                    setShowClientList(true);
+                  }}
+                  style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                >
+                  <X size={14} /> Cancel
+                </button>
+              </div>
+            )}
           {/* Basic Information */}
           <div className="form-section">
             <h2 className="section-title">Basic Information</h2>
@@ -448,7 +1046,7 @@ export default function ClientMasterForm() {
               </div>
               
               <div className="input-group">
-                <label>Pincode *</label>
+                <label>Pincode</label>
                 <input
                   type="text"
                   value={formData.address.pincode}
@@ -459,7 +1057,6 @@ export default function ClientMasterForm() {
                   placeholder="6 digits"
                   maxLength="6"
                   pattern="[0-9]{6}"
-                  required
                 />
               </div>
               
@@ -484,7 +1081,7 @@ export default function ClientMasterForm() {
             
             <div className="grid-2">
               <div className="input-group">
-                <label>Contact Person Name *</label>
+                <label>Contact Person Name</label>
                 <input
                   type="text"
                   value={formData.primaryContact.name}
@@ -493,7 +1090,6 @@ export default function ClientMasterForm() {
                     primaryContact: { ...prev.primaryContact, name: e.target.value }
                   }))}
                   placeholder="Full Name"
-                  required
                 />
               </div>
               
@@ -513,7 +1109,7 @@ export default function ClientMasterForm() {
             
             <div className="grid-3">
               <div className="input-group">
-                <label>Mobile Number *</label>
+                <label>Mobile Number</label>
                 <input
                   type="tel"
                   value={formData.primaryContact.mobile}
@@ -524,7 +1120,6 @@ export default function ClientMasterForm() {
                   placeholder="10 digits"
                   maxLength="10"
                   pattern="[0-9]{10}"
-                  required
                 />
               </div>
               
@@ -542,7 +1137,7 @@ export default function ClientMasterForm() {
               </div>
               
               <div className="input-group">
-                <label>Email Address *</label>
+                <label>Email Address</label>
                 <input
                   type="email"
                   value={formData.primaryContact.email}
@@ -551,7 +1146,6 @@ export default function ClientMasterForm() {
                     primaryContact: { ...prev.primaryContact, email: e.target.value }
                   }))}
                   placeholder="email@example.com"
-                  required
                 />
               </div>
             </div>
@@ -689,85 +1283,6 @@ export default function ClientMasterForm() {
             </div>
           </div>
 
-          {/* Bank Details */}
-          <div className="form-section">
-            <h2 className="section-title">Bank Details (Optional)</h2>
-            
-            <div className="grid-2">
-              <div className="input-group">
-                <label>Account Holder Name</label>
-                <input
-                  type="text"
-                  value={formData.bankDetails.accountName}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    bankDetails: { ...prev.bankDetails, accountName: e.target.value }
-                  }))}
-                  placeholder="As per bank records"
-                />
-              </div>
-              
-              <div className="input-group">
-                <label>Account Number</label>
-                <input
-                  type="text"
-                  className="mono"
-                  value={formData.bankDetails.accountNumber}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    bankDetails: { ...prev.bankDetails, accountNumber: e.target.value }
-                  }))}
-                  placeholder="Bank account number"
-                />
-              </div>
-            </div>
-            
-            <div className="grid-3">
-              <div className="input-group">
-                <label>Bank Name</label>
-                <input
-                  type="text"
-                  value={formData.bankDetails.bankName}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    bankDetails: { ...prev.bankDetails, bankName: e.target.value }
-                  }))}
-                  placeholder="Bank name"
-                />
-              </div>
-              
-              <div className="input-group">
-                <label>Branch</label>
-                <input
-                  type="text"
-                  value={formData.bankDetails.branch}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    bankDetails: { ...prev.bankDetails, branch: e.target.value }
-                  }))}
-                  placeholder="Branch name"
-                />
-              </div>
-              
-              <div className="input-group">
-                <label>IFSC Code</label>
-                <input
-                  type="text"
-                  className="mono"
-                  value={formData.bankDetails.ifscCode}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    bankDetails: { ...prev.bankDetails, ifscCode: e.target.value.toUpperCase() }
-                  }))}
-                  placeholder="11 characters"
-                  maxLength="11"
-                  pattern="[A-Z]{4}0[A-Z0-9]{6}"
-                  style={{ textTransform: 'uppercase' }}
-                />
-              </div>
-            </div>
-          </div>
-
           {/* Billing & Credit Details */}
           <div className="form-section">
             <h2 className="section-title">Billing & Credit Details</h2>
@@ -871,12 +1386,26 @@ export default function ClientMasterForm() {
           </div>
 
           {/* Submit Button */}
-          <div style={{ textAlign: 'center', marginTop: '30px' }}>
+          <div style={{ textAlign: 'center', marginTop: '30px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
             <button type="submit" className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '14px 40px' }}>
-              <Save size={20} /> Save Client Master
+              <Save size={20} /> {editingId ? 'Update Client' : 'Save Client Master'}
             </button>
+            {editingId && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  resetForm();
+                  setShowClientList(true);
+                }}
+                style={{ fontSize: '1.1rem', padding: '14px 40px' }}
+              >
+                Cancel
+              </button>
+            )}
           </div>
         </form>
+        )}
       </div>
     </div>
   );

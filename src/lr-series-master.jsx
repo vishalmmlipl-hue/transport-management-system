@@ -1,20 +1,92 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Hash, Building2, CheckCircle, AlertCircle, Trash2 } from 'lucide-react';
+import { apiService } from './utils/apiService';
 
 export default function LRSeriesMaster() {
   const [lrSeries, setLrSeries] = useState([]);
   const [branches, setBranches] = useState([]);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+  const [loading, setLoading] = useState(true);
 
+  const normalizeLR10Digits = (val) => {
+    const raw = String(val ?? '').trim();
+    if (!raw) return '';
+    const digits = raw.replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.length === 10) return digits;
+    if (digits.length < 10) return digits.padStart(10, '0');
+    return digits.slice(-10);
+  };
+
+  const isValidLR10 = (val) => normalizeLR10Digits(val).length === 10;
+
+  const isWithinRange = (candidate10, start10, end10) => {
+    const c = parseInt(candidate10, 10);
+    const s = parseInt(start10, 10);
+    const e = parseInt(end10, 10);
+    if ([c, s, e].some(n => Number.isNaN(n))) return false;
+    return c >= s && c <= e;
+  };
+
+  // Load branches from API
   useEffect(() => {
-    setLrSeries(JSON.parse(localStorage.getItem('lrSeries') || '[]'));
-    setBranches(JSON.parse(localStorage.getItem('branches') || '[]'));
+    const loadBranches = async () => {
+      try {
+        const result = await apiService.getBranches();
+        const branchesData = result?.data || result || [];
+        // Filter active branches and clean branch names
+        const activeBranches = branchesData
+          .filter(b => b.status === 'Active' || !b.status || b.status === undefined)
+          .map(branch => ({
+            ...branch,
+            branchName: branch.branchName ? branch.branchName.trim().replace(/0+$/, '').trim() : branch.branchName
+          }));
+        setBranches(activeBranches);
+      } catch (error) {
+        console.error('Error loading branches:', error);
+        setBranches([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadBranches();
+    
+    // Load LR series from localStorage (for now, until we migrate to API)
+    try {
+      const storedSeries = JSON.parse(localStorage.getItem('lrSeries') || '[]');
+      const repaired = (Array.isArray(storedSeries) ? storedSeries : []).map(s => {
+        const start10 = normalizeLR10Digits(s?.startNumber);
+        const end10 = normalizeLR10Digits(s?.endNumber);
+        const curr10 = normalizeLR10Digits(s?.currentNumber);
+
+        // If current number is missing/invalid/out of range, reset it to startNumber
+        const next10 = (start10 && end10 && isValidLR10(curr10) && isWithinRange(curr10, start10, end10))
+          ? curr10
+          : start10;
+
+        return {
+          ...s,
+          bookingMode: s?.bookingMode || 'PTL', // backward compatible
+          startNumber: start10 || s?.startNumber,
+          endNumber: end10 || s?.endNumber,
+          currentNumber: next10 || s?.currentNumber,
+        };
+      });
+
+      localStorage.setItem('lrSeries', JSON.stringify(repaired));
+      setLrSeries(repaired);
+    } catch (error) {
+      console.error('Error loading LR series:', error);
+      setLrSeries([]);
+    }
   }, []);
 
   const [formData, setFormData] = useState({
     seriesId: '',
     branchId: '',
     branchName: '',
+    bookingMode: 'PTL', // PTL / FTL / Both
     prefix: '',
     startNumber: '',
     endNumber: '',
@@ -35,12 +107,16 @@ export default function LRSeriesMaster() {
 
   // Auto-fill branch name when branch selected
   useEffect(() => {
-    if (formData.branchId) {
-      const branch = branches.find(b => b.id.toString() === formData.branchId);
+    if (formData.branchId && branches.length > 0) {
+      const branch = branches.find(b => 
+        b.id?.toString() === formData.branchId.toString() || 
+        b.id === formData.branchId
+      );
       if (branch) {
+        const cleanedBranchName = branch.branchName ? branch.branchName.trim().replace(/0+$/, '').trim() : branch.branchName;
         setFormData(prev => ({
           ...prev,
-          branchName: branch.branchName,
+          branchName: cleanedBranchName || branch.branchName,
           prefix: branch.branchCode || ''
         }));
       }
@@ -50,30 +126,44 @@ export default function LRSeriesMaster() {
   // Calculate totals when start/end numbers change
   useEffect(() => {
     if (formData.startNumber && formData.endNumber) {
-      const start = parseInt(formData.startNumber);
-      const end = parseInt(formData.endNumber);
+      const start10 = normalizeLR10Digits(formData.startNumber);
+      const end10 = normalizeLR10Digits(formData.endNumber);
+      const start = parseInt(start10, 10);
+      const end = parseInt(end10, 10);
       
       if (start && end && end > start) {
         const total = end - start + 1;
         const used = parseInt(formData.usedNumbers) || 0;
         const remaining = total - used;
         
-        setFormData(prev => ({
-          ...prev,
-          totalNumbers: total.toString(),
-          remainingNumbers: remaining.toString(),
-          currentNumber: formData.currentNumber || start.toString()
-        }));
+        setFormData(prev => {
+          const prevCurr10 = normalizeLR10Digits(prev.currentNumber);
+          const nextCurr10 = (isValidLR10(prevCurr10) && isWithinRange(prevCurr10, start10, end10))
+            ? prevCurr10
+            : start10;
+          return {
+            ...prev,
+            totalNumbers: total.toString(),
+            remainingNumbers: remaining.toString(),
+            // keep it a 10-digit string
+            currentNumber: nextCurr10,
+          };
+        });
       }
     }
   }, [formData.startNumber, formData.endNumber, formData.usedNumbers]);
 
   const validateSeries = () => {
-    const start = parseInt(formData.startNumber);
-    const end = parseInt(formData.endNumber);
+    const start10 = normalizeLR10Digits(formData.startNumber);
+    const end10 = normalizeLR10Digits(formData.endNumber);
+    const curr10 = normalizeLR10Digits(formData.currentNumber || formData.startNumber);
+    const start = parseInt(start10, 10);
+    const end = parseInt(end10, 10);
+    const modeCompatible = (a, b) => a === 'Both' || b === 'Both' || a === b;
+    const getMode = (s) => (s?.bookingMode || 'PTL');
     
     // Check if numbers are 10 digits
-    if (start.toString().length !== 10 || end.toString().length !== 10) {
+    if (start10.length !== 10 || end10.length !== 10) {
       alert('❌ LR numbers must be exactly 10 digits!');
       return false;
     }
@@ -83,20 +173,30 @@ export default function LRSeriesMaster() {
       alert('❌ End number must be greater than start number!');
       return false;
     }
+
+    if (curr10.length !== 10 || !isWithinRange(curr10, start10, end10)) {
+      alert('❌ Current Number must be a valid 10-digit LR within the Start/End range.');
+      return false;
+    }
     
     // Check for overlapping series in same branch
     const overlapping = lrSeries.find(series => 
       series.branchId === formData.branchId &&
       series.status === 'Active' &&
+      modeCompatible(getMode(series), formData.bookingMode) &&
       (
-        (start >= parseInt(series.startNumber) && start <= parseInt(series.endNumber)) ||
-        (end >= parseInt(series.startNumber) && end <= parseInt(series.endNumber)) ||
-        (start <= parseInt(series.startNumber) && end >= parseInt(series.endNumber))
+        (start >= parseInt(normalizeLR10Digits(series.startNumber), 10) && start <= parseInt(normalizeLR10Digits(series.endNumber), 10)) ||
+        (end >= parseInt(normalizeLR10Digits(series.startNumber), 10) && end <= parseInt(normalizeLR10Digits(series.endNumber), 10)) ||
+        (start <= parseInt(normalizeLR10Digits(series.startNumber), 10) && end >= parseInt(normalizeLR10Digits(series.endNumber), 10))
       )
     );
     
     if (overlapping) {
-      alert(`❌ Series overlaps with existing series:\n${overlapping.prefix ? overlapping.prefix + '-' : ''}${overlapping.startNumber} to ${overlapping.endNumber}`);
+      const overlapMode = getMode(overlapping);
+      alert(
+        `❌ Series overlaps with existing series (${overlapMode}):\n` +
+        `${overlapping.prefix ? overlapping.prefix + '-' : ''}${overlapping.startNumber} to ${overlapping.endNumber}`
+      );
       return false;
     }
     
@@ -115,6 +215,9 @@ export default function LRSeriesMaster() {
     const newSeries = {
       id: Date.now(),
       ...formData,
+      startNumber: normalizeLR10Digits(formData.startNumber),
+      endNumber: normalizeLR10Digits(formData.endNumber),
+      currentNumber: normalizeLR10Digits(formData.currentNumber || formData.startNumber),
       createdAt: new Date().toISOString()
     };
 
@@ -131,6 +234,7 @@ export default function LRSeriesMaster() {
       seriesId: `SER${String(existingSeries.length + 1).padStart(5, '0')}`,
       branchId: '',
       branchName: '',
+      bookingMode: 'PTL',
       prefix: '',
       startNumber: '',
       endNumber: '',
@@ -390,7 +494,7 @@ export default function LRSeriesMaster() {
           <div className="form-section">
             <h2 className="section-title">Series Details</h2>
             
-            <div className="grid-3">
+            <div className="grid-4">
               <div className="input-group">
                 <label>Series ID</label>
                 <input
@@ -404,19 +508,49 @@ export default function LRSeriesMaster() {
               
               <div className="input-group">
                 <label>Select Branch *</label>
+                {loading ? (
+                  <select disabled style={{ background: '#f8fafc' }}>
+                    <option>Loading branches...</option>
+                  </select>
+                ) : branches.length === 0 ? (
+                  <div style={{
+                    padding: '12px',
+                    background: '#fef3c7',
+                    borderRadius: '8px',
+                    border: '2px solid #fde68a',
+                    color: '#92400e',
+                    fontSize: '0.9rem'
+                  }}>
+                    ⚠️ No active branches found. Please add branches in Branch Master first.
+                  </div>
+                ) : (
+                  <select
+                    name="branchId"
+                    value={formData.branchId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, branchId: e.target.value }))}
+                    required
+                    autoFocus
+                  >
+                    <option value="">-- Select Branch --</option>
+                    {branches.map(branch => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.branchName || 'Unnamed Branch'} {branch.branchCode ? `(${branch.branchCode})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="input-group">
+                <label>LR Type *</label>
                 <select
-                  name="branchId"
-                  value={formData.branchId}
-                  onChange={(e) => setFormData(prev => ({ ...prev, branchId: e.target.value }))}
+                  value={formData.bookingMode}
+                  onChange={(e) => setFormData(prev => ({ ...prev, bookingMode: e.target.value }))}
                   required
-                  autoFocus
                 >
-                  <option value="">-- Select Branch --</option>
-                  {branches.map(branch => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.branchName} ({branch.branchCode})
-                    </option>
-                  ))}
+                  <option value="PTL">PTL LR Series</option>
+                  <option value="FTL">FTL LR Series</option>
+                  <option value="Both">Both (PTL + FTL)</option>
                 </select>
               </div>
               
@@ -492,11 +626,16 @@ export default function LRSeriesMaster() {
               <div className="input-group">
                 <label>Current Number</label>
                 <input
-                  type="number"
+                  type="text"
                   className="mono"
                   value={formData.currentNumber}
-                  onChange={(e) => setFormData(prev => ({ ...prev, currentNumber: e.target.value }))}
-                  placeholder="Auto-set to start"
+                  onChange={(e) => {
+                    // digits only, max 10
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setFormData(prev => ({ ...prev, currentNumber: digits }));
+                  }}
+                  placeholder="Auto-set to start (10 digits)"
+                  maxLength={10}
                   style={{ fontSize: '1.1rem', background: '#f8fafc' }}
                 />
               </div>
@@ -595,6 +734,7 @@ export default function LRSeriesMaster() {
             
             {lrSeries.slice().reverse().map(series => {
               const usagePercent = ((parseInt(series.usedNumbers) / parseInt(series.totalNumbers)) * 100).toFixed(1);
+              const seriesMode = series.bookingMode || 'PTL';
               
               return (
                 <div key={series.id} className="series-card">
@@ -609,7 +749,7 @@ export default function LRSeriesMaster() {
                         </span>
                       </div>
                       <p style={{ color: '#64748b', fontSize: '0.9rem' }}>
-                        {series.branchName} | Series ID: {series.seriesId} | Issued: {series.issuedDate}
+                        {series.branchName} | Series ID: {series.seriesId} | Type: {seriesMode} | Issued: {series.issuedDate}
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -641,7 +781,7 @@ export default function LRSeriesMaster() {
                     <div>
                       <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Next LR</div>
                       <div className="mono" style={{ fontSize: '1.1rem', fontWeight: '700', color: '#8b5cf6' }}>
-                        {series.prefix && `${series.prefix}-`}{series.currentNumber}
+                        {series.prefix && `${series.prefix}-`}{normalizeLR10Digits(series.currentNumber || series.startNumber)}
                       </div>
                     </div>
                   </div>

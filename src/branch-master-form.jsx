@@ -6,18 +6,37 @@ export default function BranchMasterForm() {
   // Use hooks for branches - this prevents localStorage conflicts
   const { data: allBranches, loading: branchesLoading, create: createBranch, update: updateBranch, remove: removeBranch, loadData: loadBranches } = useBranches();
   
-  // Filter active branches
+  // Helper function to clean branch name - remove trailing "0"
+  const cleanBranchName = (name) => {
+    if (!name) return '';
+    let cleaned = name.toString().trim();
+    // Remove trailing "0" (one or more zeros at the end) - be aggressive
+    cleaned = cleaned.replace(/0+$/, '');
+    cleaned = cleaned.trim();
+    // Also handle cases where there might be spaces before the 0
+    cleaned = cleaned.replace(/\s+0+$/, '');
+    return cleaned.trim();
+  };
+
+  // Filter active branches and clean branch names - ensure cleaning is applied
   const branches = (allBranches || []).filter(b => 
     b.status === 'Active' || !b.status || b.status === undefined
-  );
+  ).map(branch => {
+    const cleanedName = cleanBranchName(branch.branchName || branch.branchName || '');
+    return {
+      ...branch,
+      branchName: cleanedName
+    };
+  });
   
   // Use hooks for cities - ensures data from Render.com
-  const { data: cities, loading: citiesLoading } = useCities();
+  const { data: cities } = useCities();
   
   const [selectedCity, setSelectedCity] = useState(null);
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [editingBranchId, setEditingBranchId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false); // Prevent duplicate prompts
 
   const [formData, setFormData] = useState({
     branchName: '',
@@ -32,10 +51,6 @@ export default function BranchMasterForm() {
     isHeadOffice: false,
     managerName: '',
     managerMobile: '',
-    lrSeriesStart: '',
-    lrSeriesEnd: '',
-    lrSeriesCurrent: '',
-    lrPrefix: '',
     status: 'Active',
     nearbyCities: [], // Array of city IDs
     odaLocations: [] // Array of city IDs for ODA locations
@@ -44,30 +59,36 @@ export default function BranchMasterForm() {
   const [selectedNearbyCity, setSelectedNearbyCity] = useState('');
   const [selectedODALocation, setSelectedODALocation] = useState('');
 
-  useEffect(() => {
-    // Clear localStorage to prevent conflicts
-    localStorage.removeItem('branches');
-    localStorage.removeItem('cities');
-  }, [allBranches]);
+  // Removed useEffect that was clearing localStorage on every branch change
+  // This was causing unnecessary re-renders and focus issues
 
   // Sync selectedCity when formData.city changes (for edit mode or external updates)
+  // Only run when formData.city actually changes, not when cities array reference changes
   useEffect(() => {
-    if (formData.city && cities.length > 0) {
+    if (formData.city && cities && cities.length > 0) {
       const city = cities.find(c => c.cityName === formData.city);
-      if (city) {
+      if (city && (!selectedCity || selectedCity.cityName !== city.cityName)) {
         setSelectedCity(city);
       }
     } else if (!formData.city && selectedCity) {
       setSelectedCity(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.city, cities]);
+  }, [formData.city]); // Only depend on formData.city, not cities array
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
+    // Prevent duplicate submissions
+    if (saving || justSaved) {
+      return;
+    }
+    
     try {
       setSaving(true);
+      
+      // Clean branch name - remove trailing "0" if present
+      const cleanedBranchName = cleanBranchName(formData.branchName);
       
       if (editingBranchId) {
         // Update existing branch
@@ -75,6 +96,7 @@ export default function BranchMasterForm() {
         if (branchToUpdate) {
           const updatedBranch = {
             ...formData,
+            branchName: cleanedBranchName, // Use cleaned name
             updatedAt: new Date().toISOString()
           };
           
@@ -84,38 +106,45 @@ export default function BranchMasterForm() {
           // Clear localStorage to prevent conflicts
           localStorage.removeItem('branches');
           
-          // Reload branches from server
-          await loadBranches();
+          // Reload branches from server AFTER a delay to prevent focus loss
+          setTimeout(() => {
+            loadBranches().catch(err => console.warn('Could not reload branches:', err));
+          }, 1000); // Delay reload to prevent interrupting user input
           
-          alert(`✅ Branch "${formData.branchName}" updated successfully on Render.com server!`);
+          alert(`✅ Branch "${cleanedBranchName}" updated successfully!`);
           resetForm();
         }
       } else {
         // Create new branch
         const newBranch = {
           ...formData,
+          branchName: cleanedBranchName, // Use cleaned name
           createdAt: new Date().toISOString()
         };
 
         const savedBranch = await createBranch(newBranch);
-        console.log('✅ Branch saved to Render.com:', savedBranch);
+        console.log('✅ Branch saved to server:', savedBranch);
         
         // Clear localStorage to prevent conflicts
         localStorage.removeItem('branches');
         
-        // Reload branches from server to ensure fresh data
-        await loadBranches();
+        // Set flag to prevent duplicate prompts
+        setJustSaved(true);
         
+        // Show success message (only once)
         setShowSuccessMessage(true);
-        setTimeout(() => setShowSuccessMessage(false), 3000);
+        setTimeout(() => {
+          setShowSuccessMessage(false);
+          setJustSaved(false);
+        }, 3000);
         
         // Reset form but KEEP IT OPEN for next entry
         resetForm(true);
-
-        // Focus on first field for quick next entry
+        
+        // Reload branches from server AFTER a delay to prevent focus loss (non-blocking)
         setTimeout(() => {
-          document.querySelector('input[name="branchName"]')?.focus();
-        }, 100);
+          loadBranches().catch(err => console.warn('Could not reload branches:', err));
+        }, 1000); // Delay reload to prevent interrupting user input
       }
     } catch (error) {
       console.error('❌ Error saving branch:', error);
@@ -139,10 +168,6 @@ export default function BranchMasterForm() {
       isHeadOffice: false,
       managerName: '',
       managerMobile: '',
-      lrSeriesStart: '',
-      lrSeriesEnd: '',
-      lrSeriesCurrent: '',
-      lrPrefix: '',
       status: 'Active',
       nearbyCities: [],
       odaLocations: []
@@ -167,8 +192,11 @@ export default function BranchMasterForm() {
       c.id.toString() === branch.city?.toString()
     );
     
+    // Clean branch name when editing - remove trailing "0" if present
+    const cleanedBranchName = cleanBranchName(branch.branchName);
+    
     setFormData({
-      branchName: branch.branchName || '',
+      branchName: cleanedBranchName,
       branchCode: branch.branchCode || '',
       address: branch.address || '',
       city: branch.city || '',
@@ -180,10 +208,6 @@ export default function BranchMasterForm() {
       isHeadOffice: branch.isHeadOffice || false,
       managerName: branch.managerName || '',
       managerMobile: branch.managerMobile || '',
-      lrSeriesStart: branch.lrSeriesStart || '',
-      lrSeriesEnd: branch.lrSeriesEnd || '',
-      lrSeriesCurrent: branch.lrSeriesCurrent || '',
-      lrPrefix: branch.lrPrefix || '',
       status: branch.status || 'Active',
       nearbyCities: branch.nearbyCities || [],
       odaLocations: branch.odaLocations || []
@@ -339,13 +363,6 @@ export default function BranchMasterForm() {
           box-shadow: 0 4px 12px rgba(245,158,11,0.1);
         }
         
-        .lr-series-box {
-          background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-          padding: 16px;
-          border-radius: 8px;
-          border: 2px solid #f59e0b;
-          margin-top: 12px;
-        }
         
         .success-message {
           position: fixed;
@@ -392,7 +409,7 @@ export default function BranchMasterForm() {
             🏢 Branch Master {editingBranchId && <span style={{ fontSize: '1.5rem', color: '#3b82f6' }}>(Editing)</span>}
           </h1>
           <p className="text-slate-600 text-lg">
-            {editingBranchId ? 'Update branch details, nearby cities, and ODA locations' : 'Manage branch network with LR series allocation'}
+            {editingBranchId ? 'Update branch details, nearby cities, and ODA locations' : 'Manage branch network and locations'}
           </p>
         </div>
 
@@ -418,10 +435,19 @@ export default function BranchMasterForm() {
                   type="text"
                   name="branchName"
                   value={formData.branchName}
-                  onChange={(e) => setFormData(prev => ({ ...prev, branchName: e.target.value }))}
+                  onChange={(e) => {
+                    // Remove any trailing "0" and trim whitespace
+                    let cleanedValue = e.target.value.trim();
+                    // Remove trailing "0" if it was accidentally added
+                    if (cleanedValue.endsWith('0') && cleanedValue.length > 1) {
+                      // Check if it's a valid trailing zero (like "INDORE CITY0")
+                      // Only remove if it's clearly an error (ends with single "0" after text)
+                      cleanedValue = cleanedValue.replace(/0+$/, '').trim();
+                    }
+                    setFormData(prev => ({ ...prev, branchName: cleanedValue }));
+                  }}
                   placeholder="Mumbai Branch"
                   required
-                  autoFocus
                 />
               </div>
               
@@ -545,14 +571,13 @@ export default function BranchMasterForm() {
               </div>
               
               <div className="input-group">
-                <label>Pincode *</label>
+                <label>Pincode</label>
                 <input
                   type="text"
                   value={formData.pincode}
                   onChange={(e) => setFormData(prev => ({ ...prev, pincode: e.target.value }))}
-                  placeholder="400001"
+                  placeholder="400001 (optional)"
                   pattern="[0-9]{6}"
-                  required
                 />
               </div>
             </div>
@@ -860,102 +885,6 @@ export default function BranchMasterForm() {
             </div>
           </div>
 
-          {/* LR Series Allocation (ADMIN FEATURE) */}
-          <div className="form-section" style={{ borderLeftColor: '#dc2626' }}>
-            <h2 className="section-title">🔐 LR Series Allocation (Admin Only)</h2>
-            
-            <div style={{ 
-              background: '#fee2e2',
-              padding: '12px 16px',
-              borderRadius: '8px',
-              marginBottom: '20px',
-              border: '2px solid #fecaca',
-              color: '#991b1b',
-              fontSize: '0.9rem'
-            }}>
-              <strong>⚠️ Important:</strong> Assign unique LR number series to this branch. Each branch should have non-overlapping ranges.
-            </div>
-            
-            <div className="grid-4">
-              <div className="input-group">
-                <label>LR Prefix</label>
-                <input
-                  type="text"
-                  value={formData.lrPrefix}
-                  onChange={(e) => setFormData(prev => ({ ...prev, lrPrefix: e.target.value.toUpperCase() }))}
-                  placeholder="MUM (optional)"
-                  maxLength="5"
-                />
-                <small style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                  Example: MUM, DEL, BLR
-                </small>
-              </div>
-              
-              <div className="input-group">
-                <label>Series Start Number *</label>
-                <input
-                  type="number"
-                  value={formData.lrSeriesStart}
-                  onChange={(e) => setFormData(prev => ({ ...prev, lrSeriesStart: e.target.value }))}
-                  placeholder="1000000001"
-                  required
-                />
-                <small style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                  Starting LR number
-                </small>
-              </div>
-              
-              <div className="input-group">
-                <label>Series End Number *</label>
-                <input
-                  type="number"
-                  value={formData.lrSeriesEnd}
-                  onChange={(e) => setFormData(prev => ({ ...prev, lrSeriesEnd: e.target.value }))}
-                  placeholder="1000099999"
-                  required
-                />
-                <small style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                  Last LR number
-                </small>
-              </div>
-              
-              <div className="input-group">
-                <label>Current Number</label>
-                <input
-                  type="number"
-                  value={formData.lrSeriesCurrent}
-                  onChange={(e) => setFormData(prev => ({ ...prev, lrSeriesCurrent: e.target.value }))}
-                  placeholder="1000000001"
-                />
-                <small style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                  Next LR to be issued
-                </small>
-              </div>
-            </div>
-            
-            {formData.lrSeriesStart && formData.lrSeriesEnd && (
-              <div className="lr-series-box">
-                <h3 style={{ fontSize: '1rem', fontWeight: '700', marginBottom: '12px', color: '#92400e' }}>
-                  📋 LR Series Summary
-                </h3>
-                <div className="grid-3" style={{ fontSize: '0.9rem' }}>
-                  <div>
-                    <strong>Range:</strong><br/>
-                    {formData.lrPrefix && `${formData.lrPrefix}-`}{formData.lrSeriesStart} to {formData.lrPrefix && `${formData.lrPrefix}-`}{formData.lrSeriesEnd}
-                  </div>
-                  <div>
-                    <strong>Total Numbers:</strong><br/>
-                    {parseInt(formData.lrSeriesEnd) - parseInt(formData.lrSeriesStart) + 1} LRs
-                  </div>
-                  <div>
-                    <strong>Next LR:</strong><br/>
-                    {formData.lrPrefix && `${formData.lrPrefix}-`}{formData.lrSeriesCurrent || formData.lrSeriesStart}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-
           {/* Submit Button */}
           <div style={{ textAlign: 'center', marginTop: '30px' }}>
             {editingBranchId ? (
@@ -1007,7 +936,7 @@ export default function BranchMasterForm() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
                   <div>
                     <h3 style={{ fontSize: '1.3rem', marginBottom: '4px', color: '#f59e0b' }}>
-                      {branch.branchName}
+                      {cleanBranchName(branch.branchName)}
                       {branch.isHeadOffice && (
                         <span style={{ 
                           marginLeft: '12px',
@@ -1057,87 +986,91 @@ export default function BranchMasterForm() {
                 </div>
                 
                 {/* Nearby Cities */}
-                {(branch.nearbyCities && branch.nearbyCities.length > 0) && (
-                  <div style={{
-                    marginTop: '12px',
-                    padding: '12px',
-                    background: '#f8fafc',
-                    borderRadius: '8px',
-                    border: '2px solid #e2e8f0'
-                  }}>
-                    <strong style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: '#1e293b' }}>
-                      📍 Nearby Cities:
-                    </strong>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {branch.nearbyCities.map(cityId => {
-                        const city = cities.find(c => c.id.toString() === cityId.toString());
-                        if (!city) return null;
-                        return (
-                          <span
-                            key={cityId}
-                            style={{
-                              padding: '4px 10px',
-                              background: 'white',
-                              border: '1px solid #3b82f6',
-                              borderRadius: '12px',
-                              fontSize: '0.8rem',
-                              color: '#1e293b'
-                            }}
-                          >
-                            {city.cityName}, {city.state}
-                          </span>
-                        );
-                      })}
+                {(() => {
+                  // Ensure nearbyCities is an array
+                  const nearbyCitiesArray = Array.isArray(branch.nearbyCities) 
+                    ? branch.nearbyCities 
+                    : (branch.nearbyCities ? [branch.nearbyCities] : []);
+                  
+                  return nearbyCitiesArray.length > 0 && (
+                    <div style={{
+                      marginTop: '12px',
+                      padding: '12px',
+                      background: '#f8fafc',
+                      borderRadius: '8px',
+                      border: '2px solid #e2e8f0'
+                    }}>
+                      <strong style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: '#1e293b' }}>
+                        📍 Nearby Cities:
+                      </strong>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {nearbyCitiesArray.map(cityId => {
+                          const city = cities.find(c => c.id.toString() === cityId.toString());
+                          if (!city) return null;
+                          return (
+                            <span
+                              key={cityId}
+                              style={{
+                                padding: '4px 10px',
+                                background: 'white',
+                                border: '1px solid #3b82f6',
+                                borderRadius: '12px',
+                                fontSize: '0.8rem',
+                                color: '#1e293b'
+                              }}
+                            >
+                              {city.cityName}, {city.state}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* ODA Locations */}
-                {(branch.odaLocations && branch.odaLocations.length > 0) && (
-                  <div style={{
-                    marginTop: '12px',
-                    padding: '12px',
-                    background: '#fef3c7',
-                    borderRadius: '8px',
-                    border: '2px solid #fbbf24'
-                  }}>
-                    <strong style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: '#92400e' }}>
-                      🚚 ODA Locations:
-                    </strong>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {branch.odaLocations.map(cityId => {
-                        const city = cities.find(c => c.id.toString() === cityId.toString());
-                        if (!city) return null;
-                        return (
-                          <span
-                            key={cityId}
-                            style={{
-                              padding: '4px 10px',
-                              background: 'white',
-                              border: '1px solid #f59e0b',
-                              borderRadius: '12px',
-                              fontSize: '0.8rem',
-                              color: '#92400e'
-                            }}
-                          >
-                            {city.cityName}, {city.state}
-                          </span>
-                        );
-                      })}
+                {(() => {
+                  // Ensure odaLocations is an array
+                  const odaLocationsArray = Array.isArray(branch.odaLocations) 
+                    ? branch.odaLocations 
+                    : (branch.odaLocations ? [branch.odaLocations] : []);
+                  
+                  return odaLocationsArray.length > 0 && (
+                    <div style={{
+                      marginTop: '12px',
+                      padding: '12px',
+                      background: '#fef3c7',
+                      borderRadius: '8px',
+                      border: '2px solid #fbbf24'
+                    }}>
+                      <strong style={{ display: 'block', marginBottom: '8px', fontSize: '0.9rem', color: '#92400e' }}>
+                        🚚 ODA Locations:
+                      </strong>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {odaLocationsArray.map(cityId => {
+                          const city = cities.find(c => c.id.toString() === cityId.toString());
+                          if (!city) return null;
+                          return (
+                            <span
+                              key={cityId}
+                              style={{
+                                padding: '4px 10px',
+                                background: 'white',
+                                border: '1px solid #f59e0b',
+                                borderRadius: '12px',
+                                fontSize: '0.8rem',
+                                color: '#92400e'
+                              }}
+                            >
+                              {city.cityName}, {city.state}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
-                {branch.lrSeriesStart && (
-                  <div className="lr-series-box" style={{ marginTop: '12px' }}>
-                    <strong>📋 LR Series:</strong> {branch.lrPrefix && `${branch.lrPrefix}-`}{branch.lrSeriesStart} to {branch.lrPrefix && `${branch.lrPrefix}-`}{branch.lrSeriesEnd}
-                    <br/>
-                    <small>
-                      Current: {branch.lrPrefix && `${branch.lrPrefix}-`}{branch.lrSeriesCurrent || branch.lrSeriesStart} | 
-                      Remaining: {parseInt(branch.lrSeriesEnd) - parseInt(branch.lrSeriesCurrent || branch.lrSeriesStart) + 1} numbers
-                    </small>
-                  </div>
-                )}
               </div>
             ))}
           </div>

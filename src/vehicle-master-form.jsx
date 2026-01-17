@@ -1,12 +1,17 @@
-import React, { useState } from 'react';
-import { Save, Search, Loader, CheckCircle, AlertCircle, Download } from 'lucide-react';
-import { vehiclesService, dataService } from './services/dataService';
+import React, { useState, useEffect } from 'react';
+import { Save, Search, Loader, CheckCircle, AlertCircle, Download, Edit, Trash2, Eye, X } from 'lucide-react';
+import { useVehicles } from './hooks/useDataSync';
 import * as XLSX from 'xlsx';
+import syncService from './utils/sync-service';
 
 export default function VehicleMasterForm() {
+  const { data: vehicles, loading, error, create, update, remove } = useVehicles();
   const [loadingVahan, setLoadingVahan] = useState(false);
   const [vahanStatus, setVahanStatus] = useState(null); // 'success', 'error', null
   const [vahanMessage, setVahanMessage] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [viewingId, setViewingId] = useState(null);
+  const [activeTab, setActiveTab] = useState('form'); // 'form' or 'list'
 
   const [formData, setFormData] = useState({
     vehicleNumber: '',
@@ -246,24 +251,120 @@ export default function VehicleMasterForm() {
     alert(`✅ Excel template downloaded successfully!\n\nFilename: ${filename}\n\nPlease fill in the vehicle details and save the file. You can then import it using the bulk import feature.`);
   };
 
+  // Load vehicle data for editing
+  const handleEdit = (vehicle) => {
+    setEditingId(vehicle.id);
+    setActiveTab('form');
+    
+    // Parse nested objects if they're stored as strings
+    const owner = typeof vehicle.owner === 'string' ? JSON.parse(vehicle.owner || '{}') : (vehicle.owner || {});
+    const insurance = typeof vehicle.insurance === 'string' ? JSON.parse(vehicle.insurance || '{}') : (vehicle.insurance || {});
+    const tp = typeof vehicle.tp === 'string' ? JSON.parse(vehicle.tp || '{}') : (vehicle.tp || {});
+    const fitness = typeof vehicle.fitness === 'string' ? JSON.parse(vehicle.fitness || '{}') : (vehicle.fitness || {});
+    const permit = typeof vehicle.permit === 'string' ? JSON.parse(vehicle.permit || '{}') : (vehicle.permit || {});
+    
+    setFormData({
+      vehicleNumber: vehicle.vehicleNumber || vehicle.vehicle_number || '',
+      vehicleType: vehicle.vehicleType || vehicle.vehicle_type || '',
+      ownershipType: vehicle.ownershipType || vehicle.ownership_type || '',
+      capacity: vehicle.capacity || '',
+      capacityUnit: vehicle.capacityUnit || vehicle.capacity_unit || 'Tons',
+      owner: {
+        name: owner.name || '',
+        address: owner.address || ''
+      },
+      insurance: {
+        policyNumber: insurance.policyNumber || insurance.policy_number || '',
+        provider: insurance.provider || '',
+        expiryDate: insurance.expiryDate || insurance.expiry_date || ''
+      },
+      tp: {
+        state: tp.state || '',
+        expiryDate: tp.expiryDate || tp.expiry_date || '',
+        permitNumber: tp.permitNumber || tp.permit_number || ''
+      },
+      fitness: {
+        certificateNumber: fitness.certificateNumber || fitness.certificate_number || '',
+        expiryDate: fitness.expiryDate || fitness.expiry_date || ''
+      },
+      permit: {
+        permitNumber: permit.permitNumber || permit.permit_number || '',
+        permitType: permit.permitType || permit.permit_type || 'National',
+        expiryDate: permit.expiryDate || permit.expiry_date || ''
+      },
+      rcBook: vehicle.rcBook || vehicle.rc_book || '',
+      status: vehicle.status || 'Active',
+      remarks: vehicle.remarks || ''
+    });
+    
+    // Scroll to form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // View vehicle details
+  const handleView = (vehicle) => {
+    setViewingId(vehicle.id);
+  };
+
+  // Reset form
+  const resetForm = () => {
+    setEditingId(null);
+    setFormData({
+      vehicleNumber: '',
+      vehicleType: '',
+      ownershipType: '',
+      capacity: '',
+      capacityUnit: 'Tons',
+      owner: { name: '', address: '' },
+      insurance: { policyNumber: '', provider: '', expiryDate: '' },
+      tp: { state: '', expiryDate: '', permitNumber: '' },
+      fitness: { certificateNumber: '', expiryDate: '' },
+      permit: { permitNumber: '', permitType: 'National', expiryDate: '' },
+      rcBook: '',
+      status: 'Active',
+      remarks: ''
+    });
+  };
+
+  // Delete vehicle
+  const handleDelete = async (id, vehicleNumber) => {
+    if (!window.confirm(`Are you sure you want to delete vehicle "${vehicleNumber}"?\n\nThis action cannot be undone.`)) {
+      return;
+    }
+    
+    try {
+      await remove(id);
+      alert(`✅ Vehicle "${vehicleNumber}" deleted successfully!`);
+      if (editingId === id) {
+        resetForm();
+      }
+    } catch (error) {
+      console.error('Error deleting vehicle:', error);
+      alert(`❌ Error deleting vehicle: ${error.message}`);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     try {
-      // Check for duplicate vehicle number
-      const existingVehicles = await vehiclesService.getAll();
-      const duplicate = existingVehicles.find(
-        v => v.vehicle_number?.toUpperCase() === formData.vehicleNumber.toUpperCase() ||
-             v.vehicleNumber?.toUpperCase() === formData.vehicleNumber.toUpperCase()
-      );
-      
-      if (duplicate) {
-        alert(`⚠️ Vehicle number "${formData.vehicleNumber}" already exists!`);
-        return;
+      // Check for duplicate vehicle number (only on create, not on edit)
+      if (!editingId) {
+        const duplicate = vehicles.find(
+          v => v.id !== editingId && (
+            v.vehicle_number?.toUpperCase() === formData.vehicleNumber.toUpperCase() ||
+            v.vehicleNumber?.toUpperCase() === formData.vehicleNumber.toUpperCase()
+          )
+        );
+        
+        if (duplicate) {
+          alert(`⚠️ Vehicle number "${formData.vehicleNumber}" already exists!`);
+          return;
+        }
       }
       
-      // Prepare vehicle data (compatible with both database and localStorage)
-      const newVehicle = {
+      // Prepare vehicle data
+      const vehicleData = {
         vehicleNumber: formData.vehicleNumber,
         vehicleType: formData.vehicleType,
         ownershipType: formData.ownershipType,
@@ -278,35 +379,70 @@ export default function VehicleMasterForm() {
         status: formData.status,
         remarks: formData.remarks
       };
+
+      const ensureVehicleMaintenanceLedger = async (createdVehicleId, createdVehicleNumber) => {
+        try {
+          const vehicleNo = String(createdVehicleNumber || '').trim().toUpperCase();
+          if (!vehicleNo) return;
+
+          const sanitized = vehicleNo.replace(/[^A-Z0-9]/g, '');
+          const accountCode = `VM-${sanitized}`;
+
+          const accountsRes = await syncService.load('accounts');
+          const accounts = Array.isArray(accountsRes) ? accountsRes : (accountsRes?.data || []);
+          const exists = (accounts || []).some(a => String(a.accountCode || '').toUpperCase() === accountCode);
+          if (exists) return;
+
+          const payload = {
+            accountCode,
+            accountName: `Vehicle Maintenance - ${vehicleNo}`,
+            accountType: 'Expenses',
+            parentAccount: 'Operating Expenses',
+            balance: '0',
+            status: 'Active',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            data: JSON.stringify({
+              category: 'Expenses',
+              group: 'Operating Expenses',
+              subGroup: 'Vehicle Maintenance',
+              balanceType: 'Debit',
+              openingBalance: '0',
+              linkedEntityType: 'Vehicle',
+              linkedVehicleId: createdVehicleId || '',
+              linkedVehicleNumber: vehicleNo,
+              source: 'VehicleMaster'
+            })
+          };
+
+          const saved = await syncService.save('accounts', payload);
+          if (saved && saved.success === false) {
+            console.warn('Vehicle ledger create rejected:', saved.error);
+          }
+        } catch (err) {
+          console.warn('Vehicle maintenance ledger create failed:', err);
+        }
+      };
       
-      // Create vehicle using data service (works with database or localStorage)
-      await vehiclesService.create(newVehicle);
+      if (editingId) {
+        // Update existing vehicle
+        await update(editingId, vehicleData);
+        alert(`✅ Vehicle "${formData.vehicleNumber}" updated successfully!`);
+      } else {
+        // Create new vehicle
+        const created = await create(vehicleData);
+        // Auto-create maintenance ledger for this vehicle in Account Master
+        await ensureVehicleMaintenanceLedger(created?.id, created?.vehicleNumber || created?.vehicle_number || formData.vehicleNumber);
+        alert(`✅ Vehicle "${formData.vehicleNumber}" created successfully!\n\nThis vehicle is now available for selection in FTL bookings.`);
+      }
       
-      const storageMode = dataService.getStorageMode();
-      alert(`✅ Vehicle "${formData.vehicleNumber}" created successfully!\n\nStorage: ${storageMode === 'database' ? 'Cloud Database' : 'Local Storage'}\n\nThis vehicle is now available for selection in FTL bookings.`);
-      
-      // Reset form
-      setFormData({
-        vehicleNumber: '',
-        vehicleType: '',
-        ownershipType: '',
-        capacity: '',
-        capacityUnit: 'Tons',
-        owner: { name: '', address: '' },
-        insurance: { policyNumber: '', provider: '', expiryDate: '' },
-        tp: { state: '', expiryDate: '', permitNumber: '' },
-        fitness: { certificateNumber: '', expiryDate: '' },
-        permit: { permitNumber: '', permitType: 'National', expiryDate: '' },
-        rcBook: '',
-        status: 'Active',
-        remarks: ''
-      });
-      
-      // Reload to show updated list
-      window.location.reload();
+      // Reset form and switch to list view
+      resetForm();
+      setActiveTab('list');
+      window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
     } catch (error) {
-      console.error('Error creating vehicle:', error);
-      alert(`❌ Error creating vehicle: ${error.message}`);
+      console.error('Error saving vehicle:', error);
+      alert(`❌ Error saving vehicle: ${error.message}`);
     }
   };
 
@@ -453,7 +589,56 @@ export default function VehicleMasterForm() {
             Vehicle Master
           </h1>
           <p className="text-slate-600 text-lg">Fleet Management System</p>
-          <div style={{ marginTop: '15px' }}>
+          
+          {/* Tabs */}
+          <div style={{ 
+            display: 'flex', 
+            gap: '12px', 
+            justifyContent: 'center', 
+            marginTop: '20px',
+            marginBottom: '20px'
+          }}>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('form');
+                if (!editingId) resetForm();
+              }}
+              style={{
+                padding: '10px 24px',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                background: activeTab === 'form' 
+                  ? 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)' 
+                  : '#e2e8f0',
+                color: activeTab === 'form' ? 'white' : '#475569',
+                transition: 'all 0.2s'
+              }}
+            >
+              {editingId ? 'Edit Vehicle' : 'Add Vehicle'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('list')}
+              style={{
+                padding: '10px 24px',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                background: activeTab === 'list' 
+                  ? 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)' 
+                  : '#e2e8f0',
+                color: activeTab === 'list' ? 'white' : '#475569',
+                transition: 'all 0.2s'
+              }}
+            >
+              View Vehicles ({vehicles.length})
+            </button>
             <button
               type="button"
               onClick={generateExcelTemplate}
@@ -465,18 +650,35 @@ export default function VehicleMasterForm() {
                 fontSize: '0.95rem'
               }}
             >
-              <Download size={18} /> Download Excel Template
+              <Download size={18} /> Excel Template
             </button>
           </div>
-          <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '10px' }}>
-            Download Excel template to add multiple vehicles at once
-          </p>
         </div>
 
+        {activeTab === 'form' && (
         <form onSubmit={handleSubmit}>
+          {/* Info Banner */}
+          <div style={{
+            padding: '16px 20px',
+            background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+            border: '2px solid #3b82f6',
+            borderRadius: '12px',
+            marginBottom: '20px',
+            color: '#1e40af'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+              <CheckCircle size={20} />
+              <strong style={{ fontSize: '1rem' }}>Quick Add Vehicle</strong>
+            </div>
+            <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: '1.5' }}>
+              You can add a vehicle with just <strong>Vehicle Number, Vehicle Type, and Ownership Type</strong>. 
+              All other details (capacity, owner, insurance, fitness, permit, etc.) can be added later when editing the vehicle.
+            </p>
+          </div>
+
           {/* Basic Vehicle Information */}
           <div className="form-section">
-            <h2 className="section-title">Basic Vehicle Information</h2>
+            <h2 className="section-title">Basic Vehicle Information *</h2>
             
             <div className="grid-3">
               <div className="input-group">
@@ -647,16 +849,23 @@ export default function VehicleMasterForm() {
 
             <div className="grid-2">
               <div className="input-group">
-                <label>Capacity *</label>
+                <label>Capacity</label>
                 <input
                   type="number"
                   step="0.01"
                   value={formData.capacity}
                   onChange={(e) => setFormData(prev => ({ ...prev, capacity: e.target.value }))}
-                  placeholder="Vehicle capacity"
+                  placeholder="Vehicle capacity (can be added later)"
                   min="0"
-                  required
                 />
+                <small style={{ 
+                  display: 'block', 
+                  marginTop: '4px', 
+                  color: '#64748b', 
+                  fontSize: '0.75rem' 
+                }}>
+                  Optional - can be added later
+                </small>
               </div>
               
               <div className="input-group">
@@ -664,7 +873,6 @@ export default function VehicleMasterForm() {
                 <select
                   value={formData.capacityUnit}
                   onChange={(e) => setFormData(prev => ({ ...prev, capacityUnit: e.target.value }))}
-                  required
                 >
                   <option value="Tons">Tons</option>
                   <option value="CFT">CFT (Cubic Feet)</option>
@@ -688,10 +896,20 @@ export default function VehicleMasterForm() {
 
           {/* Owner Details */}
           <div className="form-section">
-            <h2 className="section-title">Owner Details</h2>
+            <h2 className="section-title">
+              Owner Details
+              <span style={{ 
+                fontSize: '0.75rem', 
+                fontWeight: 'normal', 
+                color: '#64748b', 
+                marginLeft: '8px' 
+              }}>
+                (Optional - can be added later)
+              </span>
+            </h2>
             
             <div className="input-group">
-              <label>Owner Name *</label>
+              <label>Owner Name</label>
               <input
                 type="text"
                 value={formData.owner.name}
@@ -699,9 +917,16 @@ export default function VehicleMasterForm() {
                   ...prev,
                   owner: { ...prev.owner, name: e.target.value }
                 }))}
-                placeholder="Full name of vehicle owner"
-                required
+                placeholder="Full name of vehicle owner (can be added later)"
               />
+              <small style={{ 
+                display: 'block', 
+                marginTop: '4px', 
+                color: '#64748b', 
+                fontSize: '0.75rem' 
+              }}>
+                Optional - can be added later
+              </small>
             </div>
             
             <div className="input-group">
@@ -720,7 +945,17 @@ export default function VehicleMasterForm() {
 
           {/* Insurance Details */}
           <div className="form-section">
-            <h2 className="section-title">Insurance Details</h2>
+            <h2 className="section-title">
+              Insurance Details
+              <span style={{ 
+                fontSize: '0.75rem', 
+                fontWeight: 'normal', 
+                color: '#64748b', 
+                marginLeft: '8px' 
+              }}>
+                (Optional - can be added later)
+              </span>
+            </h2>
             
             <div className="grid-2">
               <div className="input-group">
@@ -772,7 +1007,17 @@ export default function VehicleMasterForm() {
 
           {/* Temporary Permit (TP) Details */}
           <div className="form-section">
-            <h2 className="section-title">Temporary Permit (TP) Details</h2>
+            <h2 className="section-title">
+              Temporary Permit (TP) Details
+              <span style={{ 
+                fontSize: '0.75rem', 
+                fontWeight: 'normal', 
+                color: '#64748b', 
+                marginLeft: '8px' 
+              }}>
+                (Optional - can be added later)
+              </span>
+            </h2>
             <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '16px', fontStyle: 'italic' }}>
               Required when vehicle does not have National Permit. TP allows operation in a specific state.
             </p>
@@ -794,14 +1039,13 @@ export default function VehicleMasterForm() {
               </div>
               
               <div className="input-group">
-                <label>TP State *</label>
+                <label>TP State</label>
                 <select
                   value={formData.tp.state}
                   onChange={(e) => setFormData(prev => ({
                     ...prev,
                     tp: { ...prev.tp, state: e.target.value }
                   }))}
-                  required
                 >
                   <option value="">-- Select State --</option>
                   <option value="Andhra Pradesh">Andhra Pradesh</option>
@@ -844,7 +1088,7 @@ export default function VehicleMasterForm() {
               </div>
               
               <div className="input-group">
-                <label>TP Expiry Date *</label>
+                <label>TP Expiry Date</label>
                 <input
                   type="date"
                   value={formData.tp.expiryDate}
@@ -852,7 +1096,6 @@ export default function VehicleMasterForm() {
                     ...prev,
                     tp: { ...prev.tp, expiryDate: e.target.value }
                   }))}
-                  required
                 />
                 {formData.tp.expiryDate && new Date(formData.tp.expiryDate) < new Date() && (
                   <div className="expiry-warning">
@@ -877,7 +1120,17 @@ export default function VehicleMasterForm() {
 
           {/* Fitness Certificate */}
           <div className="form-section">
-            <h2 className="section-title">Fitness Certificate</h2>
+            <h2 className="section-title">
+              Fitness Certificate
+              <span style={{ 
+                fontSize: '0.75rem', 
+                fontWeight: 'normal', 
+                color: '#64748b', 
+                marginLeft: '8px' 
+              }}>
+                (Optional - can be added later)
+              </span>
+            </h2>
             
             <div className="grid-2">
               <div className="input-group">
@@ -916,7 +1169,17 @@ export default function VehicleMasterForm() {
 
           {/* Permit Details */}
           <div className="form-section">
-            <h2 className="section-title">Permit Details</h2>
+            <h2 className="section-title">
+              Permit Details
+              <span style={{ 
+                fontSize: '0.75rem', 
+                fontWeight: 'normal', 
+                color: '#64748b', 
+                marginLeft: '8px' 
+              }}>
+                (Optional - can be added later)
+              </span>
+            </h2>
             
             <div className="grid-3">
               <div className="input-group">
@@ -986,11 +1249,418 @@ export default function VehicleMasterForm() {
 
           {/* Submit Button */}
           <div style={{ textAlign: 'center', marginTop: '30px' }}>
+            {editingId && (
+              <button
+                type="button"
+                onClick={() => {
+                  resetForm();
+                  setActiveTab('list');
+                }}
+                style={{
+                  marginRight: '12px',
+                  padding: '14px 30px',
+                  borderRadius: '8px',
+                  border: '2px solid #64748b',
+                  background: 'white',
+                  color: '#64748b',
+                  fontSize: '1rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                <X size={18} style={{ marginRight: '8px', display: 'inline' }} />
+                Cancel
+              </button>
+            )}
             <button type="submit" className="btn btn-primary" style={{ fontSize: '1.1rem', padding: '14px 40px' }}>
-              <Save size={20} /> Save Vehicle Master
+              <Save size={20} /> {editingId ? 'Update Vehicle' : 'Save Vehicle'}
             </button>
           </div>
         </form>
+        )}
+
+        {/* Vehicle List View */}
+        {activeTab === 'list' && (
+          <div className="form-section" style={{ marginTop: '30px' }}>
+            <h2 className="section-title">
+              Vehicles List ({vehicles.length})
+            </h2>
+            
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '40px' }}>
+                <Loader size={32} className="animate-spin" style={{ margin: '0 auto', color: '#f97316' }} />
+                <p style={{ marginTop: '12px', color: '#64748b' }}>Loading vehicles...</p>
+              </div>
+            ) : error ? (
+              <div style={{ 
+                padding: '20px', 
+                background: '#fee2e2', 
+                borderRadius: '8px', 
+                color: '#991b1b',
+                textAlign: 'center'
+              }}>
+                <AlertCircle size={24} style={{ marginBottom: '8px' }} />
+                <p>Error loading vehicles: {error.message}</p>
+              </div>
+            ) : vehicles.length === 0 ? (
+              <div style={{ 
+                padding: '40px', 
+                textAlign: 'center', 
+                color: '#64748b' 
+              }}>
+                <p style={{ fontSize: '1.1rem', marginBottom: '8px' }}>No vehicles found</p>
+                <p>Click "Add Vehicle" to create your first vehicle.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {vehicles.map(vehicle => {
+                  const owner = typeof vehicle.owner === 'string' ? JSON.parse(vehicle.owner || '{}') : (vehicle.owner || {});
+                  const insurance = typeof vehicle.insurance === 'string' ? JSON.parse(vehicle.insurance || '{}') : (vehicle.insurance || {});
+                  const tp = typeof vehicle.tp === 'string' ? JSON.parse(vehicle.tp || '{}') : (vehicle.tp || {});
+                  const fitness = typeof vehicle.fitness === 'string' ? JSON.parse(vehicle.fitness || '{}') : (vehicle.fitness || {});
+                  const permit = typeof vehicle.permit === 'string' ? JSON.parse(vehicle.permit || '{}') : (vehicle.permit || {});
+                  
+                  return (
+                    <div
+                      key={vehicle.id}
+                      style={{
+                        background: 'white',
+                        border: '2px solid #e2e8f0',
+                        borderRadius: '12px',
+                        padding: '20px',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '16px' }}>
+                        <div style={{ flex: 1 }}>
+                          <h3 style={{ 
+                            fontSize: '1.3rem', 
+                            color: '#3b82f6', 
+                            marginBottom: '8px',
+                            fontWeight: 600
+                          }}>
+                            {vehicle.vehicleNumber || vehicle.vehicle_number}
+                          </h3>
+                          <div style={{ 
+                            display: 'flex', 
+                            gap: '16px', 
+                            flexWrap: 'wrap',
+                            fontSize: '0.9rem',
+                            color: '#64748b'
+                          }}>
+                            <span><strong>Type:</strong> {vehicle.vehicleType || vehicle.vehicle_type || 'N/A'}</span>
+                            <span><strong>Ownership:</strong> {vehicle.ownershipType || vehicle.ownership_type || 'N/A'}</span>
+                            <span><strong>Status:</strong> 
+                              <span style={{
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                marginLeft: '6px',
+                                background: vehicle.status === 'Active' ? '#d1fae5' : 
+                                          vehicle.status === 'Inactive' ? '#fee2e2' : '#fef3c7',
+                                color: vehicle.status === 'Active' ? '#065f46' : 
+                                       vehicle.status === 'Inactive' ? '#991b1b' : '#92400e',
+                                fontSize: '0.85rem',
+                                fontWeight: 600
+                              }}>
+                                {vehicle.status || 'Active'}
+                              </span>
+                            </span>
+                            {(vehicle.capacity || vehicle.capacity === 0) && (
+                              <span><strong>Capacity:</strong> {vehicle.capacity} {vehicle.capacityUnit || vehicle.capacity_unit || 'Tons'}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleView(vehicle)}
+                            style={{
+                              padding: '8px 16px',
+                              borderRadius: '6px',
+                              border: '2px solid #3b82f6',
+                              background: 'white',
+                              color: '#3b82f6',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                              fontWeight: 600,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <Eye size={16} />
+                            View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(vehicle)}
+                            style={{
+                              padding: '8px 16px',
+                              borderRadius: '6px',
+                              border: '2px solid #f97316',
+                              background: 'white',
+                              color: '#f97316',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                              fontWeight: 600,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <Edit size={16} />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(vehicle.id, vehicle.vehicleNumber || vehicle.vehicle_number)}
+                            style={{
+                              padding: '8px 16px',
+                              borderRadius: '6px',
+                              border: '2px solid #ef4444',
+                              background: 'white',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              fontSize: '0.85rem',
+                              fontWeight: 600,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <Trash2 size={16} />
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {/* Quick Details */}
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                        gap: '12px',
+                        fontSize: '0.85rem',
+                        color: '#475569',
+                        marginTop: '12px',
+                        paddingTop: '12px',
+                        borderTop: '1px solid #e2e8f0'
+                      }}>
+                        {owner.name && <div><strong>Owner:</strong> {owner.name}</div>}
+                        {insurance.provider && <div><strong>Insurance:</strong> {insurance.provider}</div>}
+                        {permit.permitType && <div><strong>Permit:</strong> {permit.permitType}</div>}
+                        {vehicle.rcBook || vehicle.rc_book ? <div><strong>RC Book:</strong> {vehicle.rcBook || vehicle.rc_book}</div> : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* View Modal */}
+        {viewingId && (() => {
+          const vehicle = vehicles.find(v => v.id === viewingId);
+          if (!vehicle) return null;
+          
+          const owner = typeof vehicle.owner === 'string' ? JSON.parse(vehicle.owner || '{}') : (vehicle.owner || {});
+          const insurance = typeof vehicle.insurance === 'string' ? JSON.parse(vehicle.insurance || '{}') : (vehicle.insurance || {});
+          const tp = typeof vehicle.tp === 'string' ? JSON.parse(vehicle.tp || '{}') : (vehicle.tp || {});
+          const fitness = typeof vehicle.fitness === 'string' ? JSON.parse(vehicle.fitness || '{}') : (vehicle.fitness || {});
+          const permit = typeof vehicle.permit === 'string' ? JSON.parse(vehicle.permit || '{}') : (vehicle.permit || {});
+          
+          return (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0, 0, 0, 0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              padding: '20px'
+            }}
+            onClick={() => setViewingId(null)}
+            >
+              <div
+                style={{
+                  background: 'white',
+                  borderRadius: '12px',
+                  padding: '30px',
+                  maxWidth: '800px',
+                  width: '100%',
+                  maxHeight: '90vh',
+                  overflow: 'auto',
+                  boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <h2 style={{ fontSize: '1.5rem', fontWeight: 600, color: '#1e293b' }}>
+                    Vehicle Details
+                  </h2>
+                  <button
+                    onClick={() => setViewingId(null)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '8px',
+                      borderRadius: '6px',
+                      color: '#64748b'
+                    }}
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {/* Basic Info */}
+                  <div>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '12px', color: '#3b82f6' }}>
+                      Basic Information
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '0.9rem' }}>
+                      <div><strong>Vehicle Number:</strong> {vehicle.vehicleNumber || vehicle.vehicle_number}</div>
+                      <div><strong>Vehicle Type:</strong> {vehicle.vehicleType || vehicle.vehicle_type || 'N/A'}</div>
+                      <div><strong>Ownership Type:</strong> {vehicle.ownershipType || vehicle.ownership_type || 'N/A'}</div>
+                      <div><strong>Status:</strong> {vehicle.status || 'Active'}</div>
+                      {(vehicle.capacity || vehicle.capacity === 0) && (
+                        <div><strong>Capacity:</strong> {vehicle.capacity} {vehicle.capacityUnit || vehicle.capacity_unit || 'Tons'}</div>
+                      )}
+                      {(vehicle.rcBook || vehicle.rc_book) && (
+                        <div><strong>RC Book:</strong> {vehicle.rcBook || vehicle.rc_book}</div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Owner Details */}
+                  {(owner.name || owner.address) && (
+                    <div>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '12px', color: '#3b82f6' }}>
+                        Owner Details
+                      </h3>
+                      <div style={{ fontSize: '0.9rem' }}>
+                        {owner.name && <div><strong>Name:</strong> {owner.name}</div>}
+                        {owner.address && <div style={{ marginTop: '8px' }}><strong>Address:</strong> {owner.address}</div>}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Insurance */}
+                  {(insurance.policyNumber || insurance.provider || insurance.expiryDate) && (
+                    <div>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '12px', color: '#3b82f6' }}>
+                        Insurance Details
+                      </h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '0.9rem' }}>
+                        {insurance.policyNumber && <div><strong>Policy Number:</strong> {insurance.policyNumber}</div>}
+                        {insurance.provider && <div><strong>Provider:</strong> {insurance.provider}</div>}
+                        {insurance.expiryDate && <div><strong>Expiry Date:</strong> {insurance.expiryDate}</div>}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* TP Details */}
+                  {(tp.permitNumber || tp.state || tp.expiryDate) && (
+                    <div>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '12px', color: '#3b82f6' }}>
+                        Temporary Permit (TP) Details
+                      </h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '0.9rem' }}>
+                        {tp.permitNumber && <div><strong>Permit Number:</strong> {tp.permitNumber}</div>}
+                        {tp.state && <div><strong>State:</strong> {tp.state}</div>}
+                        {tp.expiryDate && <div><strong>Expiry Date:</strong> {tp.expiryDate}</div>}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Fitness */}
+                  {(fitness.certificateNumber || fitness.expiryDate) && (
+                    <div>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '12px', color: '#3b82f6' }}>
+                        Fitness Certificate
+                      </h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '0.9rem' }}>
+                        {fitness.certificateNumber && <div><strong>Certificate Number:</strong> {fitness.certificateNumber}</div>}
+                        {fitness.expiryDate && <div><strong>Expiry Date:</strong> {fitness.expiryDate}</div>}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Permit */}
+                  {(permit.permitNumber || permit.permitType || permit.expiryDate) && (
+                    <div>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '12px', color: '#3b82f6' }}>
+                        Permit Details
+                      </h3>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '0.9rem' }}>
+                        {permit.permitNumber && <div><strong>Permit Number:</strong> {permit.permitNumber}</div>}
+                        {permit.permitType && <div><strong>Permit Type:</strong> {permit.permitType}</div>}
+                        {permit.expiryDate && <div><strong>Expiry Date:</strong> {permit.expiryDate}</div>}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Remarks */}
+                  {vehicle.remarks && (
+                    <div>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '12px', color: '#3b82f6' }}>
+                        Remarks
+                      </h3>
+                      <div style={{ fontSize: '0.9rem', color: '#475569' }}>
+                        {vehicle.remarks}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                <div style={{ marginTop: '24px', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => {
+                      setViewingId(null);
+                      handleEdit(vehicle);
+                    }}
+                    style={{
+                      padding: '10px 20px',
+                      borderRadius: '8px',
+                      border: '2px solid #f97316',
+                      background: 'white',
+                      color: '#f97316',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}
+                  >
+                    <Edit size={18} />
+                    Edit Vehicle
+                  </button>
+                  <button
+                    onClick={() => setViewingId(null)}
+                    style={{
+                      padding: '10px 20px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: '#e2e8f0',
+                      color: '#475569',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      fontWeight: 600
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

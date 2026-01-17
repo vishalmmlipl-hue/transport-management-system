@@ -13,20 +13,61 @@ import apiService from '../utils/apiService';
  * @param {object} apiMethods - API methods object with get, create, update, delete
  * @param {array} initialData - Initial data array
  */
+// Global request cache to prevent duplicate simultaneous requests
+const requestCache = new Map();
+const pendingRequests = new Map();
+
 export const useDataSync = (resourceName, apiMethods, initialData = []) => {
   const [data, setData] = useState(initialData);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncing, setSyncing] = useState(false);
 
-  // Load data from server
+  // Load data from server with request deduplication
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       
       if (apiMethods.get) {
-        const serverData = await apiMethods.get();
+        // Check if there's already a pending request for this resource
+        if (pendingRequests.has(resourceName)) {
+          // Wait for the existing request to complete
+          const existingData = await pendingRequests.get(resourceName);
+          setData(existingData || []);
+          setLoading(false);
+          return existingData;
+        }
+
+        // Check cache (valid for 5 seconds to prevent rapid re-requests)
+        const cacheKey = `${resourceName}_${Date.now()}`;
+        const cached = requestCache.get(resourceName);
+        if (cached && Date.now() - cached.timestamp < 5000) {
+          setData(cached.data || []);
+          setLoading(false);
+          return cached.data;
+        }
+
+        // Create new request promise
+        const requestPromise = apiMethods.get().then(serverData => {
+          // Cache the result
+          requestCache.set(resourceName, {
+            data: serverData || [],
+            timestamp: Date.now()
+          });
+          // Remove from pending
+          pendingRequests.delete(resourceName);
+          return serverData || [];
+        }).catch(err => {
+          // Remove from pending on error
+          pendingRequests.delete(resourceName);
+          throw err;
+        });
+
+        // Store pending request
+        pendingRequests.set(resourceName, requestPromise);
+
+        const serverData = await requestPromise;
         setData(serverData || []);
         
         // Clear localStorage for this resource (migration)
@@ -119,10 +160,11 @@ export const useDataSync = (resourceName, apiMethods, initialData = []) => {
     }
   }, [resourceName, apiMethods]);
 
-  // Load data on mount
+  // Load data on mount only (not when loadData changes to prevent infinite loops)
   useEffect(() => {
     loadData();
-  }, [loadData, resourceName]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resourceName]); // Only reload if resourceName changes
 
   return {
     data,

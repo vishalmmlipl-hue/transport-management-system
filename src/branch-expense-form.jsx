@@ -64,8 +64,8 @@ export default function BranchExpenseForm() {
       }
     }
     
-    // Auto-generate expense number
-    const expenseNo = `EXP${String(allExpenses.length + 1).padStart(6, '0')}`;
+    // Auto-generate expense number (timestamp-based to avoid collisions)
+    const expenseNo = `EXP${Date.now()}`;
     setFormData(prev => ({ ...prev, expenseNumber: expenseNo }));
   }, []);
 
@@ -101,7 +101,7 @@ export default function BranchExpenseForm() {
     return expenseType ? expenseType.expenseHead : null;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!formData.branch) {
@@ -124,9 +124,11 @@ export default function BranchExpenseForm() {
       return;
     }
 
+    // Use timestamp-based number to avoid UNIQUE collisions across users/browsers
+    const expenseNumber = formData.expenseNumber || `EXP${Date.now()}`;
     const newExpense = {
       id: Date.now(),
-      expenseNumber: formData.expenseNumber,
+      expenseNumber,
       expenseDate: formData.expenseDate,
       branch: formData.branch,
       branchName: branches.find(b => b.id.toString() === formData.branch)?.branchName || 'N/A',
@@ -151,9 +153,17 @@ export default function BranchExpenseForm() {
       status: 'Active'
     };
 
-    const updatedExpenses = [...expenses, newExpense];
-    localStorage.setItem('branchExpenses', JSON.stringify(updatedExpenses));
+    // Save to server branchExpenses (fallback handled by syncService)
+    try {
+      const syncService = (await import('./utils/sync-service')).default;
+      await syncService.save('branchExpenses', newExpense);
+      window.dispatchEvent(new CustomEvent('dataSyncedFromServer'));
+    } catch (e2) {
+      // ignore (UI still updates)
+    }
+    const updatedExpenses = [...(expenses || []), newExpense];
     setExpenses(updatedExpenses);
+    window.dispatchEvent(new CustomEvent('branchExpenseCreated', { detail: { expense: newExpense } }));
 
     // Create ledger entries
     try {
@@ -165,7 +175,7 @@ export default function BranchExpenseForm() {
     alert(`✅ Expense "${formData.expenseNumber}" added successfully!\n\nAmount: ₹${newExpense.totalAmount.toFixed(2)}\nBranch: ${newExpense.branchName}${newExpense.tripId ? '\nLinked to Trip' : ''}\n\nLedger entries created automatically.`);
 
     // Reset form
-    const expenseNo = `EXP${String(updatedExpenses.length + 1).padStart(6, '0')}`;
+    const expenseNo = `EXP${Date.now()}`;
     setFormData({
       expenseNumber: expenseNo,
       expenseDate: new Date().toISOString().split('T')[0],

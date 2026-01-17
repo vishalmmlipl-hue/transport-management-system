@@ -63,13 +63,40 @@ const apiCall = async (endpoint, method = 'GET', data = null) => {
     const response = await fetch(url, options);
     
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Network error' }));
-      throw new Error(error.message || `HTTP error! status: ${response.status}`);
+      // Try to get error message from response
+      let errorMessage = `HTTP error! status: ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch (e) {
+        // If JSON parsing fails, try to get text
+        try {
+          const errorText = await response.text();
+          if (errorText) {
+            errorMessage = errorText.substring(0, 200); // Limit length
+          }
+        } catch (e2) {
+          // If all else fails, use status
+          errorMessage = `HTTP ${response.status} ${response.statusText || 'Error'}`;
+        }
+      }
+      
+      const error = new Error(errorMessage);
+      error.status = response.status;
+      error.response = response;
+      throw error;
     }
     
     return await response.json();
   } catch (error) {
-    console.error(`API Error (${method} ${endpoint}):`, error.message);
+    // If it's already our custom error, just log and rethrow
+    if (error.status) {
+      console.error(`API Error (${method} ${endpoint}):`, error.message, `Status: ${error.status}`);
+    } else {
+      // Network error or other fetch error
+      console.error(`API Error (${method} ${endpoint}):`, error.message || error.toString());
+      console.error('Full error:', error);
+    }
     throw error;
   }
 };
@@ -141,6 +168,21 @@ export const apiService = {
     return result;
   },
   
+  async checkClientDependencies(id) {
+    const result = await apiCall(`/clients/${id}/dependencies`);
+    return result;
+  },
+  
+  async deleteClientWithDependencies(id, clearReferences = false) {
+    const result = await apiCall(`/clients/${id}/with-dependencies`, 'DELETE', { clearReferences });
+    return result;
+  },
+  
+  async updateClientWithReferences(id, clientData) {
+    const result = await apiCall(`/clients/${id}/with-references`, 'PUT', clientData);
+    return result.data;
+  },
+  
   // ========== VEHICLES ==========
   async getVehicles() {
     const result = await apiCall('/vehicles');
@@ -201,6 +243,63 @@ export const apiService = {
   
   async deleteStaff(id) {
     const result = await apiCall(`/staff/${id}`, 'DELETE');
+    return result;
+  },
+  
+  // ========== STAFF ATTENDANCE ==========
+  async getStaffAttendance() {
+    const result = await apiCall('/staffAttendance');
+    return result.data || [];
+  },
+  async createStaffAttendance(attendanceData) {
+    const result = await apiCall('/staffAttendance', 'POST', attendanceData);
+    return result.data;
+  },
+  async updateStaffAttendance(id, attendanceData) {
+    const result = await apiCall(`/staffAttendance/${id}`, 'PUT', attendanceData);
+    return result.data;
+  },
+  async deleteStaffAttendance(id) {
+    const result = await apiCall(`/staffAttendance/${id}`, 'DELETE');
+    return result;
+  },
+  
+  // ========== MOBILE APP API ==========
+  // Check-in/Check-out with location
+  async mobileCheckIn(staffId, location, deviceInfo) {
+    const result = await apiCall('/mobile/checkin', 'POST', {
+      staffId,
+      location,
+      deviceInfo,
+      timestamp: new Date().toISOString()
+    });
+    return result;
+  },
+  async mobileCheckOut(staffId, location, deviceInfo) {
+    const result = await apiCall('/mobile/checkout', 'POST', {
+      staffId,
+      location,
+      deviceInfo,
+      timestamp: new Date().toISOString()
+    });
+    return result;
+  },
+  
+  // Mobile LR Booking
+  async mobileCreateLR(lrData) {
+    const result = await apiCall('/mobile/lrBooking', 'POST', lrData);
+    return result;
+  },
+  
+  // Mobile Delivery Update
+  async mobileUpdateDelivery(lrId, deliveryData) {
+    const result = await apiCall(`/mobile/delivery/${lrId}`, 'POST', deliveryData);
+    return result;
+  },
+  
+  // Mobile POD Upload
+  async mobileUploadPOD(podData) {
+    const result = await apiCall('/mobile/pod', 'POST', podData);
     return result;
   },
   
@@ -379,8 +478,24 @@ export const apiService = {
   },
   
   async createUser(userData) {
-    const result = await apiCall('/users', 'POST', userData);
-    return result.data;
+    console.log('📤 Creating user via API:', userData);
+    try {
+      const result = await apiCall('/users', 'POST', userData);
+      console.log('✅ User creation API response:', result);
+      // Handle both { success: true, data: {...} } and direct data response
+      if (result && result.data) {
+        return result.data;
+      } else if (result && result.id) {
+        // If result is the user object directly
+        return result;
+      } else {
+        console.warn('⚠️ Unexpected API response format:', result);
+        return result;
+      }
+    } catch (error) {
+      console.error('❌ Error in createUser:', error);
+      throw error;
+    }
   },
   
   async updateUser(id, userData) {
@@ -433,6 +548,19 @@ export const apiService = {
   async deleteExpenseType(id) {
     const result = await apiCall(`/expenseTypes/${id}`, 'DELETE');
     return result;
+  },
+  
+  // ========== DRIVER LICENSE VERIFICATION ==========
+  async verifyDriverLicense(licenseData) {
+    try {
+      console.log('📤 Sending license verification request:', licenseData);
+      const result = await apiCall('/driver-license/verify', 'POST', licenseData);
+      console.log('📥 License verification response:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ API call error:', error);
+      throw error;
+    }
   },
 };
 
