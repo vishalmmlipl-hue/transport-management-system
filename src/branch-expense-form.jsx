@@ -21,6 +21,7 @@ export default function BranchExpenseForm() {
     account: '',
     amount: '',
     paymentMode: 'Cash', // Cash, Bank Transfer, Cheque
+    upiId: '',
     paidTo: '',
     description: '',
     billNumber: '',
@@ -124,6 +125,11 @@ export default function BranchExpenseForm() {
       return;
     }
 
+    if (formData.paymentMode === 'UPI' && !String(formData.upiId || '').trim()) {
+      alert('⚠️ Please enter UPI ID / Mobile Number for this payment!');
+      return;
+    }
+
     // Use timestamp-based number to avoid UNIQUE collisions across users/browsers
     const expenseNumber = formData.expenseNumber || `EXP${Date.now()}`;
     const newExpense = {
@@ -143,6 +149,7 @@ export default function BranchExpenseForm() {
       gstAmount: parseFloat(formData.gstAmount) || 0,
       totalAmount: parseFloat(formData.amount) + (parseFloat(formData.gstAmount) || 0),
       paymentMode: formData.paymentMode,
+      upiId: formData.paymentMode === 'UPI' ? String(formData.upiId || '').trim() : '',
       paidTo: formData.paidTo,
       description: formData.description,
       billNumber: formData.billNumber,
@@ -186,6 +193,7 @@ export default function BranchExpenseForm() {
       account: '',
       amount: '',
       paymentMode: 'Cash',
+      upiId: '',
       paidTo: '',
       description: '',
       billNumber: '',
@@ -532,7 +540,7 @@ export default function BranchExpenseForm() {
                 <label>Payment Mode *</label>
                 <select
                   value={formData.paymentMode}
-                  onChange={(e) => setFormData(prev => ({ ...prev, paymentMode: e.target.value }))}
+                  onChange={(e) => setFormData(prev => ({ ...prev, paymentMode: e.target.value, upiId: '' }))}
                   required
                 >
                   <option value="Cash">Cash</option>
@@ -542,6 +550,19 @@ export default function BranchExpenseForm() {
                   <option value="Card">Card</option>
                 </select>
               </div>
+
+              {formData.paymentMode === 'UPI' && (
+                <div className="input-group">
+                  <label>UPI ID / Mobile No. *</label>
+                  <input
+                    type="text"
+                    value={formData.upiId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, upiId: e.target.value }))}
+                    placeholder="example@upi or 9876543210"
+                    required
+                  />
+                </div>
+              )}
               
               <div className="input-group">
                 <label>Paid To</label>

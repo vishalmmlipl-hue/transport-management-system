@@ -23,6 +23,7 @@ export default function BranchDayBook() {
     account: '',
     amount: '',
     paymentMode: 'Cash',
+    upiId: '',
     paidTo: '',
     description: '',
     billNumber: '',
@@ -391,6 +392,11 @@ export default function BranchDayBook() {
       alert('⚠️ Please select expense category and type!');
       return;
     }
+
+    if (expenseForm.paymentMode === 'UPI' && !String(expenseForm.upiId || '').trim()) {
+      alert('⚠️ Please enter UPI ID / Mobile Number for this payment!');
+      return;
+    }
     
     if (!expenseForm.account) {
       alert('⚠️ Please select a payment account!');
@@ -440,6 +446,7 @@ export default function BranchDayBook() {
       gstAmount: parseFloat(expenseForm.gstAmount) || 0,
       totalAmount: expenseAmount,
       paymentMode: expenseForm.paymentMode,
+      upiId: expenseForm.paymentMode === 'UPI' ? String(expenseForm.upiId || '').trim() : '',
       paidTo: expenseForm.paidTo,
       description: expenseForm.description,
       billNumber: expenseForm.billNumber,
@@ -480,6 +487,7 @@ export default function BranchDayBook() {
       account: '',
       amount: '',
       paymentMode: 'Cash',
+      upiId: '',
       paidTo: '',
       description: '',
       billNumber: '',
@@ -932,7 +940,7 @@ export default function BranchDayBook() {
                   <label>Payment Mode *</label>
                   <select
                     value={expenseForm.paymentMode}
-                    onChange={(e) => setExpenseForm(prev => ({ ...prev, paymentMode: e.target.value }))}
+                    onChange={(e) => setExpenseForm(prev => ({ ...prev, paymentMode: e.target.value, upiId: '' }))}
                     required
                   >
                     <option value="Cash">Cash</option>
@@ -942,6 +950,19 @@ export default function BranchDayBook() {
                   </select>
                 </div>
               </div>
+
+              {expenseForm.paymentMode === 'UPI' && (
+                <div className="input-group">
+                  <label>UPI ID / Mobile No. *</label>
+                  <input
+                    type="text"
+                    value={expenseForm.upiId}
+                    onChange={(e) => setExpenseForm(prev => ({ ...prev, upiId: e.target.value }))}
+                    placeholder="example@upi or 9876543210"
+                    required
+                  />
+                </div>
+              )}
 
               <div className="grid-2">
                 <div className="input-group">

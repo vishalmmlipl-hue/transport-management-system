@@ -29,6 +29,7 @@ export default function VehicleMaintenanceForm() {
     // optional accounting posting (only if branch chosen)
     paidFromBranch: '',
     paymentMode: 'Cash', // Cash | UPI | Bank | Credit
+    upiId: '',
     paymentAccountId: '', // branchAccounts.id (required for Cash/UPI/Bank)
     creditDueDate: '',
     // bill
@@ -218,6 +219,7 @@ export default function VehicleMaintenanceForm() {
       accountId: prev.accountId || '',
       paidFromBranch: '',
       paymentMode: 'Cash',
+      upiId: '',
       paymentAccountId: '',
       creditDueDate: '',
       billName: '',
@@ -239,6 +241,10 @@ export default function VehicleMaintenanceForm() {
 
     const paymentMode = String(form.paymentMode || 'Cash');
     const isCredit = paymentMode === 'Credit';
+    if (paymentMode === 'UPI' && !String(form.upiId || '').trim()) {
+      alert('⚠️ UPI ID / Mobile Number is required for UPI payments');
+      return;
+    }
     if (!isCredit) {
       if (!form.paidFromBranch) {
         alert('⚠️ Paid From Branch is required for Cash/UPI/Bank payments');
@@ -290,6 +296,7 @@ export default function VehicleMaintenanceForm() {
         createdBy: currentUser?.username || '',
         expenseHeadName: selectedAccount?.accountName || '',
         paymentMode: paymentMode,
+        upiId: paymentMode === 'UPI' ? String(form.upiId || '').trim() : '',
         paidFromBranch: form.paidFromBranch || '',
         paymentAccountId: form.paymentAccountId || '',
         creditDueDate: form.creditDueDate || '',
@@ -323,6 +330,7 @@ export default function VehicleMaintenanceForm() {
           gstAmount: '0',
           totalAmount: String(totalCost.toFixed(2)),
           paymentMode: paymentMode,
+          upiId: paymentMode === 'UPI' ? String(form.upiId || '').trim() : '',
           account: String(form.paymentAccountId || ''),
           accountName: payAccName,
           accountType: payAccType,
@@ -616,6 +624,7 @@ export default function VehicleMaintenanceForm() {
                   onChange={(e) => setForm(prev => ({
                     ...prev,
                     paymentMode: e.target.value,
+                    upiId: '',
                     paymentAccountId: e.target.value === 'Credit' ? '' : prev.paymentAccountId
                   }))}
                 >
@@ -626,6 +635,19 @@ export default function VehicleMaintenanceForm() {
                   <option value="Credit">Credit</option>
                 </select>
               </div>
+
+              {form.paymentMode === 'UPI' && (
+                <div className="input-group">
+                  <label>UPI ID / Mobile No. *</label>
+                  <input
+                    type="text"
+                    value={form.upiId}
+                    onChange={(e) => setForm(prev => ({ ...prev, upiId: e.target.value }))}
+                    placeholder="example@upi or 9876543210"
+                    required
+                  />
+                </div>
+              )}
 
               <div className="input-group">
                 <label>Payment Account {form.paymentMode === 'Credit' ? '(not required)' : '*'}</label>

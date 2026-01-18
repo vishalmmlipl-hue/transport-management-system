@@ -503,6 +503,7 @@ export default function TripManagementForm() {
     expenseDate: new Date().toISOString().split('T')[0],
     paidFromBranch: '', // Branch from which money is paid (for Day Book)
     paymentMode: 'Cash', // Cash, UPI, Bank, On Account
+    upiId: '',
     paidTo: '',
     receiptNumber: '',
     fuelLiters: '', // Liters of fuel (only for Fuel type)
@@ -972,6 +973,11 @@ export default function TripManagementForm() {
       return;
     }
 
+    if (expenseData.paymentMode === 'UPI' && !String(expenseData.upiId || '').trim()) {
+      alert('⚠️ Please enter UPI ID / Mobile Number for this payment!');
+      return;
+    }
+
     if (!expenseData.paidFromBranch) {
       alert('⚠️ Please select Paid From Branch!');
       return;
@@ -1008,6 +1014,7 @@ export default function TripManagementForm() {
         fuelRate: (parseFloat(expenseData.fuelLiters) || 0) > 0 ? (amountNum / (parseFloat(expenseData.fuelLiters) || 1)) : 0,
         fuelAmount: amountNum,
         paymentMode: expenseData.paymentMode || 'Cash',
+        upiId: (expenseData.paymentMode === 'UPI') ? String(expenseData.upiId || '').trim() : '',
         paidFromBranch: expenseData.paidFromBranch || '',
         addedAt: new Date().toISOString()
       } : null;
@@ -1111,6 +1118,7 @@ export default function TripManagementForm() {
           gstAmount: 0,
           totalAmount: amountNum,
           paymentMode: expenseData.paymentMode || 'Cash',
+          upiId: (expenseData.paymentMode === 'UPI') ? String(expenseData.upiId || '').trim() : '',
           paidTo: expenseData.paidTo || '',
           description: `Trip ${trip.tripNumber}: ${expenseData.expenseType}${expenseData.description ? ` - ${expenseData.description}` : ''}`,
           receiptNumber: expenseData.receiptNumber || '',
@@ -1164,6 +1172,7 @@ export default function TripManagementForm() {
             amount: amountNum,
             narration: `${expenseData.expenseType} for Trip ${trip.tripNumber}`,
             paymentMode: expenseData.paymentMode || 'Cash',
+            upiId: (expenseData.paymentMode === 'UPI') ? String(expenseData.upiId || '').trim() : '',
             createdAt: new Date().toISOString()
           });
           localStorage.setItem('driverLedgerEntries', JSON.stringify(driverLedger));
@@ -2748,7 +2757,7 @@ export default function TripManagementForm() {
                 <label>Payment Mode *</label>
                 <select
                   value={expenseData.paymentMode}
-                  onChange={(e) => setExpenseData(prev => ({ ...prev, paymentMode: e.target.value }))}
+                  onChange={(e) => setExpenseData(prev => ({ ...prev, paymentMode: e.target.value, upiId: '' }))}
                   required
                 >
                   <option value="Cash">Cash</option>
@@ -2758,6 +2767,19 @@ export default function TripManagementForm() {
                 </select>
               </div>
             </div>
+
+            {expenseData.paymentMode === 'UPI' && (
+              <div className="input-group">
+                <label>UPI ID / Mobile No. *</label>
+                <input
+                  type="text"
+                  value={expenseData.upiId}
+                  onChange={(e) => setExpenseData(prev => ({ ...prev, upiId: e.target.value }))}
+                  placeholder="example@upi or 9876543210"
+                  required
+                />
+              </div>
+            )}
 
             {/* Driver selection for Salary/Bhatta */}
             {(isSalaryExpenseType(expenseData.expenseType) || isBhattaExpenseType(expenseData.expenseType)) && (
@@ -3037,6 +3059,7 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
     description: '',
     paidFromBranch: '', // Branch that paid (for Day Book)
     paymentMode: 'Cash',
+    upiId: '',
     state: '',
     fuelType: 'diesel', // 'diesel' or 'cng'
     fuelRate: '',
@@ -3045,6 +3068,7 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
   const [advanceEntry, setAdvanceEntry] = useState({
     amount: '',
     paymentMode: 'Cash', // Cash, UPI, In Bank
+    upiId: '',
     paidFromBranch: '', // Branch that paid (for Day Book)
     advanceDate: new Date().toISOString().split('T')[0],
     description: ''
@@ -3175,7 +3199,8 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
     const { name, value } = e.target;
     setFuelEntry(prev => ({
       ...prev,
-      [name]: value
+      [name]: value,
+      ...(name === 'paymentMode' && value !== 'UPI' ? { upiId: '' } : {})
     }));
   };
 
@@ -3183,7 +3208,8 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
     const { name, value } = e.target;
     setAdvanceEntry(prev => ({
       ...prev,
-      [name]: value
+      [name]: value,
+      ...(name === 'paymentMode' && value !== 'UPI' ? { upiId: '' } : {})
     }));
   };
 
@@ -3201,6 +3227,11 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
 
     if (!fuelEntry.paidFromBranch) {
       alert('⚠️ Please select Paid From Branch!');
+      return;
+    }
+
+    if (fuelEntry.paymentMode === 'UPI' && !String(fuelEntry.upiId || '').trim()) {
+      alert('⚠️ Please enter UPI ID / Mobile Number for this payment!');
       return;
     }
 
@@ -3223,6 +3254,9 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
         fuelType: fuelEntry.fuelType,
         fuelRate: parseFloat(fuelEntry.fuelRate) || 0,
         fuelAmount: parseFloat(fuelEntry.fuelAmount) || 0,
+        paidFromBranch: fuelEntry.paidFromBranch || '',
+        paymentMode: fuelEntry.paymentMode || 'Cash',
+        upiId: (fuelEntry.paymentMode === 'UPI') ? String(fuelEntry.upiId || '').trim() : '',
         addedAt: new Date().toISOString()
       };
 
@@ -3306,6 +3340,7 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
           gstAmount: 0,
           totalAmount: amountNum,
           paymentMode: fuelEntry.paymentMode || 'Cash',
+        upiId: (fuelEntry.paymentMode === 'UPI') ? String(fuelEntry.upiId || '').trim() : '',
           paidTo: vendor?.tradeName || vendor?.companyName || vendor?.vendorName || '',
           description: `Fuel (${fuelEntry.fuelType}) for Trip ${trip.tripNumber} - ${fuelEntry.fuelLiters} L`,
           receiptNumber: '',
@@ -3346,6 +3381,7 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
         description: '',
         paidFromBranch: fuelEntry.paidFromBranch || '',
         paymentMode: 'Cash',
+        upiId: '',
         state: '',
         fuelType: 'diesel',
         fuelRate: '',
@@ -3372,6 +3408,11 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
       return;
     }
 
+    if (advanceEntry.paymentMode === 'UPI' && !String(advanceEntry.upiId || '').trim()) {
+      alert('⚠️ Please enter UPI ID / Mobile Number for this payment!');
+      return;
+    }
+
     if (!advanceEntry.paidFromBranch) {
       alert('⚠️ Please select Paid From Branch!');
       return;
@@ -3390,6 +3431,7 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
         id: Date.now(),
         amount: parseFloat(advanceEntry.amount),
         paymentMode: advanceEntry.paymentMode,
+        upiId: advanceEntry.paymentMode === 'UPI' ? String(advanceEntry.upiId || '').trim() : '',
         advanceDate: advanceEntry.advanceDate,
         description: advanceEntry.description,
         addedAt: new Date().toISOString()
@@ -3480,6 +3522,7 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
           gstAmount: 0,
           totalAmount: amountNum,
           paymentMode: advanceEntry.paymentMode || 'Cash',
+          upiId: (advanceEntry.paymentMode === 'UPI') ? String(advanceEntry.upiId || '').trim() : '',
           paidTo: paidToName,
           description: `Advance for Trip ${trip.tripNumber}${advanceEntry.description ? ` - ${advanceEntry.description}` : ''}`,
           receiptNumber: '',
@@ -3506,6 +3549,7 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
             amount: amountNum,
             narration: `Advance for Trip ${trip.tripNumber}`,
             paymentMode: advanceEntry.paymentMode || 'Cash',
+            upiId: (advanceEntry.paymentMode === 'UPI') ? String(advanceEntry.upiId || '').trim() : '',
             createdAt: new Date().toISOString()
           });
           localStorage.setItem('driverLedgerEntries', JSON.stringify(driverLedger));
@@ -3520,6 +3564,7 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
       setAdvanceEntry({
         amount: '',
         paymentMode: 'Cash',
+        upiId: '',
         paidFromBranch: advanceEntry.paidFromBranch || '',
         advanceDate: new Date().toISOString().split('T')[0],
         description: ''
@@ -3814,6 +3859,37 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
 
               <div className="grid-2">
                 <div className="input-group">
+                  <label>Payment Mode *</label>
+                  <select
+                    name="paymentMode"
+                    value={fuelEntry.paymentMode}
+                    onChange={handleFuelEntryChange}
+                    required
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="UPI">UPI</option>
+                    <option value="In Bank">In Bank</option>
+                  </select>
+                </div>
+                {fuelEntry.paymentMode === 'UPI' ? (
+                  <div className="input-group">
+                    <label>UPI ID / Mobile No. *</label>
+                    <input
+                      type="text"
+                      name="upiId"
+                      value={fuelEntry.upiId}
+                      onChange={handleFuelEntryChange}
+                      placeholder="example@upi or 9876543210"
+                      required
+                    />
+                  </div>
+                ) : (
+                  <div />
+                )}
+              </div>
+
+              <div className="grid-2">
+                <div className="input-group">
                   <label>Fuel Date *</label>
                   <input
                     type="date"
@@ -3878,6 +3954,20 @@ function AddTripExpenseForm({ trips, setTrips, fuelVendors: propFuelVendors, set
                   </select>
                 </div>
               </div>
+
+              {advanceEntry.paymentMode === 'UPI' && (
+                <div className="input-group">
+                  <label>UPI ID / Mobile No. *</label>
+                  <input
+                    type="text"
+                    name="upiId"
+                    value={advanceEntry.upiId}
+                    onChange={handleAdvanceEntryChange}
+                    placeholder="example@upi or 9876543210"
+                    required
+                  />
+                </div>
+              )}
 
               <div className="grid-2">
                 <div className="input-group">

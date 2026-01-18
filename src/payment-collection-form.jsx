@@ -832,12 +832,12 @@ export default function PaymentCollectionFormEnhanced() {
                 </div>
                 
                 <div className="input-group">
-                  <label>UPI ID/Address</label>
+                  <label>UPI ID / Mobile No.</label>
                   <input
                     type="text"
                     value={formData.upiId}
                     onChange={(e) => setFormData(prev => ({ ...prev, upiId: e.target.value }))}
-                    placeholder="example@paytm"
+                    placeholder="example@upi or 9876543210"
                   />
                 </div>
               </div>

@@ -15,6 +15,7 @@ export default function AdminExpenseForm() {
     sourceAccount: '',
     amount: '',
     paymentMode: 'Bank Transfer', // Bank Transfer, Cash, Cheque
+    upiId: '',
     referenceNumber: '',
     description: '',
     remarks: ''
@@ -61,6 +62,11 @@ export default function AdminExpenseForm() {
       return;
     }
 
+    if (formData.paymentMode === 'UPI' && !String(formData.upiId || '').trim()) {
+      alert('⚠️ Please enter UPI ID / Mobile Number for this payment!');
+      return;
+    }
+
     const selectedBranch = branches.find(b => b.id.toString() === formData.branch);
     const selectedAccount = formData.sourceAccount 
       ? accounts.find(a => a.id.toString() === formData.sourceAccount)
@@ -81,6 +87,7 @@ export default function AdminExpenseForm() {
       sourceBranchName: selectedAccount?.branchName || '',
       amount: parseFloat(formData.amount),
       paymentMode: formData.paymentMode,
+      upiId: formData.paymentMode === 'UPI' ? String(formData.upiId || '').trim() : '',
       referenceNumber: formData.referenceNumber,
       description: formData.description,
       remarks: formData.remarks,
@@ -105,6 +112,7 @@ export default function AdminExpenseForm() {
       sourceAccount: '',
       amount: '',
       paymentMode: 'Bank Transfer',
+      upiId: '',
       referenceNumber: '',
       description: '',
       remarks: ''
@@ -377,13 +385,14 @@ export default function AdminExpenseForm() {
                 <label>Payment Mode *</label>
                 <select
                   value={formData.paymentMode}
-                  onChange={(e) => setFormData(prev => ({ ...prev, paymentMode: e.target.value }))}
+                  onChange={(e) => setFormData(prev => ({ ...prev, paymentMode: e.target.value, upiId: '' }))}
                   required
                 >
                   {formData.sourceType === 'Cash' ? (
                     <>
                       <option value="Cash">Cash</option>
                       <option value="Cheque">Cheque</option>
+                      <option value="UPI">UPI</option>
                     </>
                   ) : (
                     <>
@@ -397,6 +406,19 @@ export default function AdminExpenseForm() {
                   )}
                 </select>
               </div>
+
+              {formData.paymentMode === 'UPI' && (
+                <div className="input-group">
+                  <label>UPI ID / Mobile No. *</label>
+                  <input
+                    type="text"
+                    value={formData.upiId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, upiId: e.target.value }))}
+                    placeholder="example@upi or 9876543210"
+                    required
+                  />
+                </div>
+              )}
               
               <div className="input-group">
                 <label>Reference Number</label>

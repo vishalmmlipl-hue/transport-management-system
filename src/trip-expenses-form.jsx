@@ -8,6 +8,7 @@ export default function TripExpensesForm() {
   const [totalKM, setTotalKM] = useState('');
   const [driverSalary, setDriverSalary] = useState('');
   const [driverSalaryPaymentMode, setDriverSalaryPaymentMode] = useState('Cash'); // 'Cash' or 'On Account'
+  const [driverSalaryUpiId, setDriverSalaryUpiId] = useState('');
   const [desiredAverage, setDesiredAverage] = useState(''); // km per liter expected
   const [averageGiven, setAverageGiven] = useState(''); // km per liter actual
   const [totalDieselTaken, setTotalDieselTaken] = useState(''); // total liters
@@ -50,6 +51,7 @@ export default function TripExpensesForm() {
     setTotalKM('');
     setDriverSalary('');
     setDriverSalaryPaymentMode('Cash');
+    setDriverSalaryUpiId('');
     setDesiredAverage('');
     setAverageGiven('');
     setTotalDieselTaken('');
@@ -69,7 +71,8 @@ export default function TripExpensesForm() {
       description: '',
       date: new Date().toISOString().split('T')[0],
       location: '',
-      paymentMode: 'Cash' // 'Cash' or 'On Account'
+      paymentMode: 'Cash', // Cash | UPI | On Account
+      upiId: ''
     };
     
     switch(type) {
@@ -109,7 +112,13 @@ export default function TripExpensesForm() {
   // Update expense entry
   const updateExpense = (type, id, field, value) => {
     const updateList = (list) => list.map(e => 
-      e.id === id ? { ...e, [field]: value } : e
+      e.id === id
+        ? {
+            ...e,
+            [field]: value,
+            ...(field === 'paymentMode' && value !== 'UPI' ? { upiId: '' } : {})
+          }
+        : e
     );
     
     switch(type) {
@@ -189,6 +198,7 @@ export default function TripExpensesForm() {
       totalKM: totalKM,
       driverSalary: driverSalary,
       driverSalaryPaymentMode: driverSalaryPaymentMode,
+      driverSalaryUpiId: driverSalaryPaymentMode === 'UPI' ? String(driverSalaryUpiId || '').trim() : '',
       desiredAverage: desiredAverage,
       averageGiven: averageGiven,
       totalDieselTaken: totalDieselTaken,
@@ -500,7 +510,11 @@ export default function TripExpensesForm() {
                     <label>Salary Payment Mode *</label>
                     <select
                       value={driverSalaryPaymentMode}
-                      onChange={(e) => setDriverSalaryPaymentMode(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setDriverSalaryPaymentMode(v);
+                        if (v !== 'UPI') setDriverSalaryUpiId('');
+                      }}
                       style={{
                         width: '100%',
                         padding: '10px 12px',
@@ -510,8 +524,30 @@ export default function TripExpensesForm() {
                       }}
                     >
                       <option value="Cash">Cash (Paid Immediately)</option>
+                      <option value="UPI">UPI</option>
                       <option value="On Account">On Account (Pay to Driver Later)</option>
                     </select>
+                    {driverSalaryPaymentMode === 'UPI' && (
+                      <div style={{ marginTop: '10px' }}>
+                        <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#475569', marginBottom: '6px' }}>
+                          UPI ID / Mobile No. *
+                        </label>
+                        <input
+                          type="text"
+                          value={driverSalaryUpiId}
+                          onChange={(e) => setDriverSalaryUpiId(e.target.value)}
+                          placeholder="example@upi or 9876543210"
+                          required
+                          style={{
+                            width: '100%',
+                            padding: '10px 12px',
+                            border: '2px solid #e2e8f0',
+                            borderRadius: '8px',
+                            fontSize: '0.95rem'
+                          }}
+                        />
+                      </div>
+                    )}
                     {driverSalaryPaymentMode === 'On Account' && (
                       <small style={{ display: 'block', marginTop: '4px', color: '#f59e0b', fontSize: '0.75rem' }}>
                         ⚠️ This salary will be added to driver's account and can be settled later.
@@ -861,8 +897,30 @@ export default function TripExpensesForm() {
                         }}
                       >
                         <option value="Cash">Cash (Paid Immediately)</option>
+                        <option value="UPI">UPI</option>
                         <option value="On Account">On Account (Pay to Driver Later)</option>
                       </select>
+                      {expense.paymentMode === 'UPI' && (
+                        <div style={{ marginTop: '10px' }}>
+                          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#475569', marginBottom: '6px' }}>
+                            UPI ID / Mobile No. *
+                          </label>
+                          <input
+                            type="text"
+                            value={expense.upiId || ''}
+                            onChange={(e) => updateExpense('bhatta', expense.id, 'upiId', e.target.value)}
+                            placeholder="example@upi or 9876543210"
+                            required
+                            style={{
+                              width: '100%',
+                              padding: '10px 12px',
+                              border: '2px solid #e2e8f0',
+                              borderRadius: '8px',
+                              fontSize: '0.95rem'
+                            }}
+                          />
+                        </div>
+                      )}
                       {expense.paymentMode === 'On Account' && (
                         <small style={{ display: 'block', marginTop: '4px', color: '#f59e0b', fontSize: '0.75rem' }}>
                           ⚠️ This amount will be added to driver's account and can be settled later against salary/bhatta.
@@ -1058,8 +1116,30 @@ export default function TripExpensesForm() {
                         }}
                       >
                         <option value="Cash">Cash (Paid Immediately)</option>
+                        <option value="UPI">UPI</option>
                         <option value="On Account">On Account (Pay to Driver Later)</option>
                       </select>
+                      {expense.paymentMode === 'UPI' && (
+                        <div style={{ marginTop: '10px' }}>
+                          <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, color: '#475569', marginBottom: '6px' }}>
+                            UPI ID / Mobile No. *
+                          </label>
+                          <input
+                            type="text"
+                            value={expense.upiId || ''}
+                            onChange={(e) => updateExpense('other', expense.id, 'upiId', e.target.value)}
+                            placeholder="example@upi or 9876543210"
+                            required
+                            style={{
+                              width: '100%',
+                              padding: '10px 12px',
+                              border: '2px solid #e2e8f0',
+                              borderRadius: '8px',
+                              fontSize: '0.95rem'
+                            }}
+                          />
+                        </div>
+                      )}
                       {expense.paymentMode === 'On Account' && (
                         <small style={{ display: 'block', marginTop: '4px', color: '#f59e0b', fontSize: '0.75rem' }}>
                           ⚠️ This amount will be added to driver's account and can be settled later against salary/bhatta.
