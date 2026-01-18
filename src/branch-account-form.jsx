@@ -6,6 +6,19 @@ export default function BranchAccountForm() {
   const [branches, setBranches] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [editingAccount, setEditingAccount] = useState(null);
+
+  const normalizeBranchAccount = (acc) => {
+    if (!acc) return acc;
+    let dataObj = {};
+    const raw = acc.data;
+    if (raw && typeof raw === 'string') {
+      try { dataObj = JSON.parse(raw); } catch { dataObj = {}; }
+    } else if (raw && typeof raw === 'object') {
+      dataObj = raw;
+    }
+    // Merge parsed data into the row so UI fields (branchName/accountHolderName/etc.) work even if stored in data.
+    return { ...acc, ...dataObj };
+  };
   
   const [formData, setFormData] = useState({
     accountType: 'Bank Account', // Bank Account or Cashier Account
@@ -35,7 +48,9 @@ export default function BranchAccountForm() {
         const allBranches = Array.isArray(branchesRes) ? branchesRes : (branchesRes?.data || []);
         const allBranchAccounts = Array.isArray(branchAccRes) ? branchAccRes : (branchAccRes?.data || []);
         const activeBranches = (allBranches || []).filter(b => !b.status || b.status === 'Active');
-        const activeAccounts = (allBranchAccounts || []).filter(a => !a.status || a.status === 'Active');
+        const activeAccounts = (allBranchAccounts || [])
+          .map(normalizeBranchAccount)
+          .filter(a => !a.status || a.status === 'Active');
         setBranches(activeBranches);
         setAccounts(activeAccounts);
         localStorage.setItem('branches', JSON.stringify(activeBranches));
@@ -54,7 +69,9 @@ export default function BranchAccountForm() {
     try {
       const res = await syncService.load('branchAccounts');
       const list = Array.isArray(res) ? res : (res?.data || []);
-      const active = (list || []).filter(a => !a.status || a.status === 'Active');
+      const active = (list || [])
+        .map(normalizeBranchAccount)
+        .filter(a => !a.status || a.status === 'Active');
       setAccounts(active);
       localStorage.setItem('branchAccounts', JSON.stringify(active));
     } catch (e) {
@@ -145,16 +162,19 @@ export default function BranchAccountForm() {
       accountId: linkedAccountId || '',
       status: formData.status || 'Active',
       updatedAt: new Date().toISOString(),
-      data: {
+      // IMPORTANT: backend column `data` is stored as TEXT; always send JSON string so it persists.
+      data: JSON.stringify({
         branchName,
         branchCode,
         branchAddress: formData.branchAddress || '',
+        // store account number in data as well for backward compatibility if server schema lacks column
+        accountNumber: formData.accountNumber || '',
         accountHolderName: formData.accountHolderName || '',
         contactPerson: formData.contactPerson || '',
         contactNumber: formData.contactNumber || '',
         email: formData.email || '',
         remarks: formData.remarks || ''
-      }
+      })
     };
 
     if (editingAccount) {
