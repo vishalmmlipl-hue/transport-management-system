@@ -959,7 +959,10 @@ const tables = [
   'users', 'branches', 'cities', 'vehicles', 'drivers', 'staff', 'staffAttendance',
   'lrBookings', 'ftlLRBookings', 'ptlLRBookings', 'manifests', 'trips',
   'invoices', 'payments', 'pods', 'clients', 'accounts', 'expenseTypes',
-  'branchExpenses', 'marketVehicleVendors', 'otherVendors', 'clientRates'
+  'branchExpenses',
+  'branchAccounts',
+  'vehicleMaintenance',
+  'marketVehicleVendors', 'otherVendors', 'clientRates'
 ];
 
 tables.forEach(table => createCRUDRoutes(table));
