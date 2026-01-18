@@ -44,11 +44,11 @@ export default function BranchDayBook() {
     const loadInitial = async () => {
       const user = JSON.parse(localStorage.getItem('currentUser') || 'null');
       setCurrentUser(user);
+      const syncService = (await import('./utils/sync-service')).default;
 
       // Load branches from server (fallback to localStorage)
       let allBranches = [];
       try {
-        const syncService = (await import('./utils/sync-service')).default;
         const res = await syncService.load('branches');
         allBranches = Array.isArray(res) ? res : (res?.data || []);
         localStorage.setItem('branches', JSON.stringify(allBranches || []));
@@ -60,7 +60,6 @@ export default function BranchDayBook() {
       
       // Load branchAccounts from server (fallback to localStorage)
       try {
-        const syncService = (await import('./utils/sync-service')).default;
         const result = await syncService.load('branchAccounts');
         const list = Array.isArray(result) ? result : (result?.data || []);
         const active = (list || []).filter(a => !a.status || a.status === 'Active');
@@ -73,19 +72,38 @@ export default function BranchDayBook() {
       
       // Load branchExpenses from server (fallback to localStorage)
       try {
-        const syncService = (await import('./utils/sync-service')).default;
         const result = await syncService.load('branchExpenses');
         const list = Array.isArray(result) ? result : (result?.data || []);
         setExpenses(list);
       } catch (e) {
         setExpenses(JSON.parse(localStorage.getItem('branchExpenses') || '[]'));
       }
-      
-      const allExpenseMaster = JSON.parse(localStorage.getItem('expenseMaster') || '[]');
-      setExpenseMaster(allExpenseMaster.filter(em => em.status === 'Active'));
-      
-      const allAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
-      setAccounts(allAccounts.filter(a => a.status === 'Active'));
+
+      // Load Expense Master (backend table: expenseTypes) + Accounts from server.
+      // IMPORTANT: syncService clears localStorage on successful loads, so do not rely on legacy localStorage keys.
+      try {
+        const [expenseTypesRes, accountsRes] = await Promise.all([
+          syncService.load('expenseTypes'),
+          syncService.load('accounts'),
+        ]);
+
+        const expenseTypes = Array.isArray(expenseTypesRes) ? expenseTypesRes : (expenseTypesRes?.data || []);
+        const activeTypes = (expenseTypes || [])
+          .filter(et => !et.status || et.status === 'Active')
+          .map(et => ({ ...et, expenseHead: et.accountId || et.expenseHead }));
+        setExpenseMaster(activeTypes);
+
+        const accountsList = Array.isArray(accountsRes) ? accountsRes : (accountsRes?.data || []);
+        const activeAccounts = (accountsList || []).filter(a => !a.status || a.status === 'Active');
+        setAccounts(activeAccounts);
+      } catch (e) {
+        // Legacy fallback keys (older versions)
+        const legacyExpenseMaster = JSON.parse(localStorage.getItem('expenseMaster') || '[]');
+        setExpenseMaster((legacyExpenseMaster || []).filter(em => em.status === 'Active'));
+
+        const legacyAccounts = JSON.parse(localStorage.getItem('accountMaster') || '[]');
+        setAccounts((legacyAccounts || []).filter(a => a.status === 'Active'));
+      }
       
       // Check if admin
       const systemUsers = JSON.parse(localStorage.getItem('users') || '[]');
@@ -116,6 +134,36 @@ export default function BranchDayBook() {
     };
     
     loadInitial();
+  }, []);
+
+  // Refresh expense master when Expense Master is updated anywhere
+  useEffect(() => {
+    const reloadExpenseMaster = async () => {
+      try {
+        const syncService = (await import('./utils/sync-service')).default;
+        const [expenseTypesRes, accountsRes] = await Promise.all([
+          syncService.load('expenseTypes'),
+          syncService.load('accounts'),
+        ]);
+        const expenseTypes = Array.isArray(expenseTypesRes) ? expenseTypesRes : (expenseTypesRes?.data || []);
+        const activeTypes = (expenseTypes || [])
+          .filter(et => !et.status || et.status === 'Active')
+          .map(et => ({ ...et, expenseHead: et.accountId || et.expenseHead }));
+        setExpenseMaster(activeTypes);
+
+        const accountsList = Array.isArray(accountsRes) ? accountsRes : (accountsRes?.data || []);
+        const activeAccounts = (accountsList || []).filter(a => !a.status || a.status === 'Active');
+        setAccounts(activeAccounts);
+      } catch (e) {
+        // ignore
+      }
+    };
+    window.addEventListener('expenseTypesUpdated', reloadExpenseMaster);
+    window.addEventListener('dataSyncedFromServer', reloadExpenseMaster);
+    return () => {
+      window.removeEventListener('expenseTypesUpdated', reloadExpenseMaster);
+      window.removeEventListener('dataSyncedFromServer', reloadExpenseMaster);
+    };
   }, []);
 
   // React to Admin changing branch in dashboard/topbar
