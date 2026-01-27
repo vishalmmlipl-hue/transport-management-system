@@ -155,7 +155,530 @@ const getTableColumns = async (tableName) => {
     )`,
     'vehicleMaintenance'
   );
+
+  // General Ledger Entries (double-entry) - for manual postings and system links
+  await ensureTableExists(
+    `CREATE TABLE IF NOT EXISTS ledgerEntries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entryDate TEXT,
+      voucherNo TEXT,
+      narration TEXT,
+      debitAccountId TEXT,
+      creditAccountId TEXT,
+      amount REAL DEFAULT 0,
+      branchId TEXT,
+      referenceType TEXT,
+      referenceId TEXT,
+      status TEXT DEFAULT 'Active',
+      data TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+    'ledgerEntries'
+  );
+  // Best-effort indexes (ignore failures on older sqlite builds)
+  try { await dbRun(`CREATE INDEX IF NOT EXISTS idx_ledgerEntries_debit ON ledgerEntries(debitAccountId, entryDate)`); } catch (e) {}
+  try { await dbRun(`CREATE INDEX IF NOT EXISTS idx_ledgerEntries_credit ON ledgerEntries(creditAccountId, entryDate)`); } catch (e) {}
+  try { await dbRun(`CREATE INDEX IF NOT EXISTS idx_ledgerEntries_ref ON ledgerEntries(referenceType, referenceId)`); } catch (e) {}
 })();
+
+// ========= Ledger helpers (accounts + ledgerEntries) =========
+const safeParseJson = (v) => {
+  try {
+    if (!v) return null;
+    if (typeof v === 'object') return v;
+    if (typeof v !== 'string') return null;
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+};
+
+const normCode = (s) => String(s || '').trim().toUpperCase().replace(/\s+/g, '');
+
+const getAccountDataObj = (row) => {
+  const d = safeParseJson(row?.data);
+  return d && typeof d === 'object' ? d : {};
+};
+
+const findLinkedAccountId = async ({ linkedEntityType, linkedEntity }) => {
+  try {
+    const rows = await dbAll(`SELECT id, data, status FROM accounts`);
+    const targetType = String(linkedEntityType || '').trim().toLowerCase();
+    const targetId = String(linkedEntity || '').trim();
+    for (const r of rows || []) {
+      const st = String(r?.status || 'Active').toLowerCase();
+      if (st === 'deleted') continue;
+      const d = getAccountDataObj(r);
+      const t = String(d?.linkedEntityType || '').trim().toLowerCase();
+      const id = String(d?.linkedEntity || '').trim();
+      if (t === targetType && id === targetId) return String(r.id);
+    }
+  } catch (e) {}
+  return '';
+};
+
+const findAccountIdByCode = async (accountCode) => {
+  const code = normCode(accountCode);
+  if (!code) return '';
+  try {
+    const row = await dbGet(
+      `SELECT id FROM accounts WHERE UPPER(REPLACE(accountCode,' ','')) = ? LIMIT 1`,
+      [code]
+    );
+    return row?.id != null ? String(row.id) : '';
+  } catch (e) {
+    return '';
+  }
+};
+
+const ensureLinkedLedgerAccount = async (spec) => {
+  const linkedEntityType = String(spec?.linkedEntityType || '').trim();
+  const linkedEntity = String(spec?.linkedEntity || '').trim();
+  if (!linkedEntityType || !linkedEntity) return '';
+
+  const existingLinked = await findLinkedAccountId({ linkedEntityType, linkedEntity });
+  if (existingLinked) return existingLinked;
+
+  const accountCode = String(spec?.accountCode || '').trim();
+  if (accountCode) {
+    const existingByCode = await findAccountIdByCode(accountCode);
+    if (existingByCode) return existingByCode;
+  }
+
+  try {
+    const cols = await getTableColumns('accounts');
+    if (!cols || cols.size === 0) return '';
+
+    const nowIso = new Date().toISOString();
+    const category = String(spec?.category || 'Expenses').trim();
+    const group = String(spec?.group || '').trim();
+    const subGroup = String(spec?.subGroup || '').trim();
+    const balanceType = String(spec?.balanceType || 'Debit').trim();
+    const openingBalance = String(spec?.openingBalance ?? '0');
+
+    const dataObj = {
+      category,
+      group,
+      subGroup,
+      openingBalance,
+      balanceType,
+      linkedEntityType,
+      linkedEntity,
+      autoCreated: true,
+      description: String(spec?.description || '').trim(),
+    };
+
+    const payload = {
+      accountName: String(spec?.accountName || '').trim(),
+      accountCode: accountCode,
+      accountType: category,
+      parentAccount: group,
+      balance: openingBalance,
+      status: 'Active',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      data: JSON.stringify(dataObj),
+    };
+
+    const keys = Object.keys(payload).filter(k => cols.has(k));
+    const values = keys.map(k => payload[k]);
+    const placeholders = keys.map(() => '?').join(', ');
+    const columns = keys.join(', ');
+    const q = `INSERT INTO accounts (${columns}) VALUES (${placeholders})`;
+    const r = await dbRun(q, values);
+    return r?.id != null ? String(r.id) : '';
+  } catch (e) {
+    console.warn('Auto-ledger create failed:', e?.message || e);
+    return '';
+  }
+};
+
+const insertLedgerEntryRow = async (payload) => {
+  const cols = await getTableColumns('ledgerEntries');
+  if (!cols || cols.size === 0) return '';
+  const keys = Object.keys(payload || {}).filter((k) => cols.has(k));
+  if (keys.length === 0) return '';
+  const values = keys.map((k) => payload[k]);
+  const placeholders = keys.map(() => '?').join(', ');
+  const columns = keys.join(', ');
+  const q = `INSERT INTO ledgerEntries (${columns}) VALUES (${placeholders})`;
+  const r = await dbRun(q, values);
+  return r?.id != null ? String(r.id) : '';
+};
+
+// ========= Driver ledgers =========
+const getEntityDisplayName = (tableName, row) => {
+  if (!row) return '';
+  const d = safeParseJson(row.data) || {};
+  if (tableName === 'drivers') return String(row.driverName || d.driverName || '').trim();
+  if (tableName === 'branches') return String(row.branchName || d.branchName || '').trim();
+  return '';
+};
+
+const getEntityCode = (tableName, row) => {
+  if (!row) return '';
+  const d = safeParseJson(row.data) || {};
+  if (tableName === 'drivers') return String(row.licenseNumber || d.licenseNumber || row.driverCode || d.driverCode || '').trim();
+  if (tableName === 'branches') return String(row.branchCode || d.branchCode || row.id || '').trim();
+  return '';
+};
+
+const loadBranchByToken = async (branchToken) => {
+  const t = String(branchToken || '').trim();
+  if (!t) return null;
+  try {
+    const byId = await dbGet(`SELECT * FROM branches WHERE id = ? LIMIT 1`, [t]);
+    if (byId) return byId;
+  } catch (e) {}
+  try {
+    const cols = await getTableColumns('branches');
+    if (cols.has('branchCode')) {
+      const byCode = await dbGet(`SELECT * FROM branches WHERE UPPER(TRIM(branchCode)) = UPPER(?) LIMIT 1`, [t]);
+      if (byCode) return byCode;
+    }
+  } catch (e) {}
+  return null;
+};
+
+const ensureBranchCashBookLedger = async (branchToken, fallbackBranchName = '') => {
+  const br = await loadBranchByToken(branchToken);
+  const branchId = String(br?.id ?? branchToken ?? '').trim();
+  if (!branchId) return '';
+  const branchCode = String(br?.branchCode || branchToken || branchId).trim();
+  const branchName = String(br?.branchName || fallbackBranchName || branchToken || `Branch ${branchId}`).trim();
+  const accountCode = `CASH-${normCode(branchCode) || String(branchId)}`;
+  return await ensureLinkedLedgerAccount({
+    linkedEntityType: 'Branch Cash Book',
+    linkedEntity: branchId,
+    accountName: `${branchName} - Cash Book`,
+    accountCode,
+    category: 'Assets',
+    group: 'Current Assets',
+    subGroup: 'Cash in Hand',
+    balanceType: 'Debit',
+    openingBalance: '0',
+    description: 'Auto-created: Branch Cash Book for Trip/Driver payments',
+  });
+};
+
+const ensureDriverPayableLedger = async (driverRow) => {
+  if (!driverRow || driverRow.id == null) return '';
+  const name = getEntityDisplayName('drivers', driverRow) || `Driver ${driverRow.id}`;
+  const code = getEntityCode('drivers', driverRow);
+  const accountCode = `DRVP-${normCode(code) || String(driverRow.id)}`;
+  return await ensureLinkedLedgerAccount({
+    linkedEntityType: 'DriverPayable',
+    linkedEntity: String(driverRow.id),
+    accountName: `${name} - Payable`,
+    accountCode,
+    category: 'Liabilities',
+    group: 'Current Liabilities',
+    subGroup: 'Outstanding Expenses',
+    balanceType: 'Credit',
+    openingBalance: '0',
+    description: 'Auto-created: Driver payable ledger (salary/bhatta/payments/deductions)',
+  });
+};
+
+const ensureDriverSalaryExpenseHeadLedger = async () => {
+  return await ensureLinkedLedgerAccount({
+    linkedEntityType: 'ExpenseHead',
+    linkedEntity: 'DRIVER_SALARY',
+    accountName: 'Driver Salary & Allowances',
+    accountCode: 'EXP-DRV-SAL',
+    category: 'Expenses',
+    group: 'Administrative Expenses',
+    subGroup: 'Salary & Wages',
+    balanceType: 'Debit',
+    openingBalance: '0',
+    description: 'Auto-created: Driver Salary/Bhatta expense head',
+  });
+};
+
+const ensureExtraDieselRecoveryIncomeHeadLedger = async () => {
+  return await ensureLinkedLedgerAccount({
+    linkedEntityType: 'IncomeHead',
+    linkedEntity: 'EXTRA_DIESEL_RECOVERY',
+    accountName: 'Extra Diesel Recovery (Driver)',
+    accountCode: 'INC-DRV-DIESEL-REC',
+    category: 'Income',
+    group: 'Other Income',
+    subGroup: 'Recoveries',
+    balanceType: 'Credit',
+    openingBalance: '0',
+    description: 'Auto-created: Recovery from driver for extra diesel',
+  });
+};
+
+// ========= Posting rules =========
+const isTripDriverExpenseType = (expenseType) => {
+  const s = String(expenseType || '').trim().toLowerCase();
+  if (!s) return false;
+  // Be permissive: some screens save "Salary" (without "Trip") while others save "Trip Salary".
+  // We treat any driver-related payout/expense heads as driver ledger candidates.
+  const hits =
+    s.includes('salary') ||
+    s.includes('bhatta') ||
+    s.includes('allowance') ||
+    s.includes('advance') ||
+    s.includes('driver');
+  return hits;
+};
+
+const findDriverIdByContactOrName = async ({ paidToContact = '', paidTo = '' }) => {
+  const mobile = String(paidToContact || '').trim();
+  const name = String(paidTo || '').trim();
+  try {
+    const cols = await getTableColumns('drivers');
+    if (cols && cols.size > 0) {
+      if (mobile && cols.has('mobile')) {
+        const r = await dbGet(`SELECT id FROM drivers WHERE TRIM(COALESCE(mobile,'')) = ? LIMIT 1`, [mobile]);
+        if (r?.id != null) return String(r.id);
+      }
+      if (name && cols.has('driverName')) {
+        const r = await dbGet(
+          `SELECT id FROM drivers WHERE LOWER(TRIM(COALESCE(driverName,''))) = LOWER(?) LIMIT 1`,
+          [name]
+        );
+        if (r?.id != null) return String(r.id);
+      }
+    }
+  } catch (e) {}
+  return '';
+};
+
+const getDriverIdFromBranchExpenseRow = async (row) => {
+  if (!row) return '';
+  const d = safeParseJson(row.data) || {};
+  const direct = String(d.driverId || d.ownedDriver || row.driverId || '').trim();
+  if (direct) return direct;
+  // Backward compatibility: try mapping from paidToContact / paidTo when driverId was not stored
+  const paidToContact = String(d.paidToContact || d.paidToMobile || '').trim();
+  const paidTo = String(d.paidTo || '').trim();
+  return await findDriverIdByContactOrName({ paidToContact, paidTo });
+};
+
+const getBranchTokenFromBranchExpenseRow = (row) => {
+  if (!row) return '';
+  const d = safeParseJson(row.data) || {};
+  return String(row.branch || d.branchId || d.paidFromBranch || '').trim();
+};
+
+const maybeCreateTripManagementLedgerFromBranchExpense = async (branchExpenseRow) => {
+  if (!branchExpenseRow || branchExpenseRow.id == null) return;
+  const expType = String(branchExpenseRow.expenseType || '').trim();
+  if (!isTripDriverExpenseType(expType)) return;
+
+  const driverId = await getDriverIdFromBranchExpenseRow(branchExpenseRow);
+  if (!driverId) return;
+
+  // We may create TWO postings for a cash-like payment:
+  // 1) Expense recognition: Dr Salary Expense, Cr Driver Payable
+  // 2) Settlement (if paid now): Dr Driver Payable, Cr Branch Cash Book
+  const ensureNotExists = async (refType) => {
+    const existing = await dbGet(
+      `SELECT id FROM ledgerEntries WHERE referenceType = ? AND referenceId = ? LIMIT 1`,
+      [refType, String(branchExpenseRow.id)]
+    );
+    return !existing?.id;
+  };
+
+  const d = safeParseJson(branchExpenseRow.data) || {};
+  const paymentMode = String(branchExpenseRow.paymentMode || d.paymentMode || 'Cash').trim();
+  const pmLower = paymentMode.toLowerCase();
+  const isOnAccount = pmLower === 'on account' || pmLower === 'credit';
+
+  const amount =
+    Number(branchExpenseRow.totalAmount ?? branchExpenseRow.amount ?? d.totalAmount ?? d.amount ?? 0) || 0;
+  if (!(amount > 0)) return;
+
+  const entryDate = String(branchExpenseRow.expenseDate || d.expenseDate || '').trim() || new Date().toISOString().slice(0, 10);
+  const voucherNo = String(branchExpenseRow.expenseNumber || `BE-${branchExpenseRow.id}`).trim();
+  const branchToken = getBranchTokenFromBranchExpenseRow(branchExpenseRow);
+  const branchName = String(d.branchName || '').trim();
+
+  const driverRow = await dbGet(`SELECT * FROM drivers WHERE id = ? LIMIT 1`, [driverId]);
+  if (!driverRow) return;
+
+  const driverPayableAccountId = await ensureDriverPayableLedger(driverRow);
+  const salaryExpenseAccountId = await ensureDriverSalaryExpenseHeadLedger();
+  const branchCashAccountId = await ensureBranchCashBookLedger(branchToken, branchName);
+  if (!driverPayableAccountId || !salaryExpenseAccountId || !branchCashAccountId) return;
+
+  const tripNo = String(d.tripNumber || '').trim();
+  const tripId = d.tripId != null ? String(d.tripId) : (d.tripId ? String(d.tripId) : '');
+  const narration =
+    String(branchExpenseRow.description || '').trim() ||
+    `${expType}${tripNo ? ` for ${tripNo}` : (tripId ? ` (Trip ${tripId})` : '')}`;
+
+  const nowIso = new Date().toISOString();
+
+  // 1) Expense recognition (always)
+  if (await ensureNotExists('branchExpenses')) {
+    await insertLedgerEntryRow({
+      entryDate,
+      voucherNo,
+      narration,
+      debitAccountId: String(salaryExpenseAccountId),
+      creditAccountId: String(driverPayableAccountId),
+      amount,
+      branchId: branchToken ? String(branchToken) : '',
+      referenceType: 'branchExpenses',
+      referenceId: String(branchExpenseRow.id),
+      status: 'Active',
+      data: JSON.stringify({
+        source: 'TripManagement',
+        kind: 'trip_driver_expense',
+        driverId,
+        tripId: d.tripId != null ? String(d.tripId) : null,
+        tripNumber: tripNo || null,
+        paymentMode: paymentMode || null,
+      }),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+  }
+
+  // 2) Settlement if paid now
+  if (!isOnAccount) {
+    if (await ensureNotExists('branchExpensesPayment')) {
+      await insertLedgerEntryRow({
+        entryDate,
+        voucherNo,
+        narration: `Payment: ${narration}`,
+        debitAccountId: String(driverPayableAccountId),
+        creditAccountId: String(branchCashAccountId),
+        amount,
+        branchId: branchToken ? String(branchToken) : '',
+        referenceType: 'branchExpensesPayment',
+        referenceId: String(branchExpenseRow.id),
+        status: 'Active',
+        data: JSON.stringify({
+          source: 'TripManagement',
+          kind: 'trip_driver_payment',
+          driverId,
+          tripId: d.tripId != null ? String(d.tripId) : null,
+          tripNumber: tripNo || null,
+          paymentMode: paymentMode || null,
+        }),
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+    }
+  }
+};
+
+const getTripExpensesObj = (tripRow) => {
+  const direct = safeParseJson(tripRow?.expenses);
+  if (direct && typeof direct === 'object') return direct;
+  const d = safeParseJson(tripRow?.data) || {};
+  const nested = d?.expenses;
+  if (nested && typeof nested === 'object') return nested;
+  return {};
+};
+
+const getOwnedDriverIdFromTripRow = (tripRow) => {
+  const d = safeParseJson(tripRow?.data) || {};
+  const id = d?.ownedDriver ?? d?.driverId ?? '';
+  return String(id || '').trim();
+};
+
+const maybeCreateExtraDieselLedgerFromTripRow = async (tripRow) => {
+  if (!tripRow || tripRow.id == null) return;
+  const driverId = getOwnedDriverIdFromTripRow(tripRow);
+  if (!driverId) return;
+
+  const exp = getTripExpensesObj(tripRow);
+  const extraDieselCost = Number(exp?.extraDieselCost || 0) || 0;
+  const dieselDeduction = Number(exp?.dieselDeduction || 0) || 0;
+  const amount = extraDieselCost > 0 ? extraDieselCost : (dieselDeduction > 0 ? dieselDeduction : 0);
+  if (!(amount > 0)) return;
+
+  const refType = extraDieselCost > 0 ? 'trips_extraDiesel' : 'trips_dieselDeduction';
+  const existing = await dbGet(
+    `SELECT id FROM ledgerEntries WHERE referenceType = ? AND referenceId = ? LIMIT 1`,
+    [refType, String(tripRow.id)]
+  );
+  if (existing?.id) return;
+
+  const driverRow = await dbGet(`SELECT * FROM drivers WHERE id = ? LIMIT 1`, [driverId]);
+  if (!driverRow) return;
+
+  const driverPayableAccountId = await ensureDriverPayableLedger(driverRow);
+  const incomeAccountId = await ensureExtraDieselRecoveryIncomeHeadLedger();
+  if (!driverPayableAccountId || !incomeAccountId) return;
+
+  const tripNo = String(tripRow.tripNumber || '').trim();
+  const entryDate = String(tripRow.tripDate || '').trim() || new Date().toISOString().slice(0, 10);
+  const voucherNo = tripNo || `TRIP-${tripRow.id}`;
+  const narration = extraDieselCost > 0
+    ? `Extra Diesel Deduction for ${voucherNo}`
+    : `Diesel Deduction for ${voucherNo}`;
+
+  const nowIso = new Date().toISOString();
+  await insertLedgerEntryRow({
+    entryDate,
+    voucherNo,
+    narration,
+    debitAccountId: String(driverPayableAccountId),
+    creditAccountId: String(incomeAccountId),
+    amount,
+    branchId: '',
+    referenceType: refType,
+    referenceId: String(tripRow.id),
+    status: 'Active',
+    data: JSON.stringify({
+      source: 'TripExpenses',
+      kind: extraDieselCost > 0 ? 'extra_diesel' : 'diesel_deduction',
+      driverId,
+      tripId: String(tripRow.id),
+      tripNumber: tripNo || null,
+      extraDieselCost: extraDieselCost || 0,
+      dieselDeduction: dieselDeduction || 0,
+    }),
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  });
+};
+
+const backfillTripManagementLedgerEntries = async () => {
+  try {
+    const beCols = await getTableColumns('branchExpenses');
+    const leCols = await getTableColumns('ledgerEntries');
+    if (!beCols || beCols.size === 0 || !leCols || leCols.size === 0) return;
+  } catch (e) {
+    return;
+  }
+  let rows = [];
+  try {
+    rows = await dbAll(`SELECT * FROM branchExpenses ORDER BY id DESC LIMIT 2000`);
+  } catch (e) {
+    return;
+  }
+  for (const r of rows || []) {
+    try { await maybeCreateTripManagementLedgerFromBranchExpense(r); } catch (e) {}
+  }
+};
+
+const backfillTripExtraDieselLedgerEntries = async () => {
+  try {
+    const tCols = await getTableColumns('trips');
+    const leCols = await getTableColumns('ledgerEntries');
+    if (!tCols || tCols.size === 0 || !leCols || leCols.size === 0) return;
+  } catch (e) {
+    return;
+  }
+  let rows = [];
+  try {
+    rows = await dbAll(`SELECT * FROM trips ORDER BY id DESC LIMIT 2000`);
+  } catch (e) {
+    return;
+  }
+  for (const r of rows || []) {
+    try { await maybeCreateExtraDieselLedgerFromTripRow(r); } catch (e) {}
+  }
+};
 
 // Generate next client code (e.g., TBB001) from DB.
 // Prefix is used to support Cash/ToPay/Sundry clients too.
@@ -733,7 +1256,13 @@ const createCRUDRoutes = (tableName) => {
           newRecord.branchName = newRecord.branchName.trim().replace(/0+$/, '').trim();
         }
       }
-      
+
+      // Auto-post ledgers (best-effort)
+      try {
+        if (tableName === 'branchExpenses') await maybeCreateTripManagementLedgerFromBranchExpense(newRecord);
+        if (tableName === 'trips') await maybeCreateExtraDieselLedgerFromTripRow(newRecord);
+      } catch (e) {}
+
       res.json({ success: true, data: newRecord });
     } catch (error) {
       console.error(`❌ Error creating ${tableName}:`, error.message);
@@ -928,7 +1457,13 @@ const createCRUDRoutes = (tableName) => {
       if (tableName === 'branches' && updatedRecord.branchName) {
         updatedRecord.branchName = updatedRecord.branchName.trim().replace(/0+$/, '').trim();
       }
-      
+
+      // Auto-post ledgers (best-effort)
+      try {
+        if (tableName === 'branchExpenses') await maybeCreateTripManagementLedgerFromBranchExpense(updatedRecord);
+        if (tableName === 'trips') await maybeCreateExtraDieselLedgerFromTripRow(updatedRecord);
+      } catch (e) {}
+
       res.json({ success: true, data: updatedRecord });
     } catch (error) {
       if ((error?.message || '').includes('no such table')) {
@@ -962,10 +1497,19 @@ const tables = [
   'branchExpenses',
   'branchAccounts',
   'vehicleMaintenance',
-  'marketVehicleVendors', 'otherVendors', 'clientRates'
+  'marketVehicleVendors', 'otherVendors', 'clientRates',
+  'ledgerEntries'
 ];
 
 tables.forEach(table => createCRUDRoutes(table));
+
+// Backfill missing ledger entries on startup (best-effort, idempotent)
+setImmediate(() => {
+  Promise.resolve()
+    .then(() => backfillTripManagementLedgerEntries())
+    .then(() => backfillTripExtraDieselLedgerEntries())
+    .catch(() => {});
+});
 
 // ========== CLIENT DEPENDENCY MANAGEMENT ==========
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Plus, Trash2, DollarSign, Fuel, Package, TrendingUp, Calculator, Truck } from 'lucide-react';
-import { createDriverSalaryLedger } from './utils/ledgerService';
+import syncService from './utils/sync-service';
 
 export default function TripExpensesForm() {
   const [trips, setTrips] = useState([]);
@@ -22,8 +22,17 @@ export default function TripExpensesForm() {
   const [otherDeductions, setOtherDeductions] = useState('');
 
   useEffect(() => {
-    const tripsData = JSON.parse(localStorage.getItem('trips') || '[]');
-    setTrips(tripsData);
+    (async () => {
+      try {
+        const res = await syncService.load('trips');
+        const list = Array.isArray(res) ? res : (res?.data || []);
+        setTrips(list || []);
+        try { localStorage.setItem('trips', JSON.stringify(list || [])); } catch (e) {}
+      } catch (e) {
+        const fallback = JSON.parse(localStorage.getItem('trips') || '[]');
+        setTrips(fallback);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -179,7 +188,7 @@ export default function TripExpensesForm() {
   
   const avgPerKM = totalKM ? (totalExpenses / parseFloat(totalKM)).toFixed(2) : 0;
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!selectedTrip) {
@@ -189,10 +198,18 @@ export default function TripExpensesForm() {
     
     const trip = trips.find(t => t.id.toString() === selectedTrip);
     
-    // Get branch ID from trip's manifest
-    const manifests = JSON.parse(localStorage.getItem('manifests') || '[]');
-    const manifest = manifests.find(m => m.id === trip.manifestId);
-    const branchId = manifest?.branch || trip.branch || null;
+    // Get branch ID from trip's manifest (prefer server)
+    let branchId = null;
+    try {
+      const mRes = await syncService.load('manifests');
+      const mList = Array.isArray(mRes) ? mRes : (mRes?.data || []);
+      const manifest = (mList || []).find(m => String(m.id) === String(trip.manifestId));
+      branchId = manifest?.branch || trip.branch || null;
+    } catch (e) {
+      const manifests = JSON.parse(localStorage.getItem('manifests') || '[]');
+      const manifest = manifests.find(m => m.id === trip.manifestId);
+      branchId = manifest?.branch || trip.branch || null;
+    }
     
     const expensesData = {
       totalKM: totalKM,
@@ -242,21 +259,80 @@ export default function TripExpensesForm() {
     const onAccountSalary = driverSalaryPaymentMode === 'On Account' ? salary : 0;
     const totalOnAccount = onAccountSalary + onAccountBhatta + onAccountOther;
     
-    // Create ledger entries for salary and bhatta if they exist
-    if (branchId && (salary > 0 || totalBhatta > 0 || totalOnAccount > 0)) {
+    // ============================
+    // Server-first sync + ledgers
+    // ============================
+    try {
+      // Persist expenses to server so backend can auto-post:
+      // - Driver payables (On Account salary/bhatta/other) via branchExpenses
+      // - Extra diesel deduction via trips.data.expenses.extraDieselCost
+      let dataObj = {};
       try {
-        createDriverSalaryLedger(
-          updatedTrip, 
-          salary, 
-          totalBhatta, 
-          branchId,
-          driverSalaryPaymentMode,
-          bhattaExpenses,
-          otherExpenses
-        );
-      } catch (error) {
-        console.error('Error creating ledger entries:', error);
+        if (trip.data && typeof trip.data === 'string') dataObj = JSON.parse(trip.data);
+        else if (trip.data && typeof trip.data === 'object') dataObj = { ...trip.data };
+      } catch (e) {
+        dataObj = {};
       }
+      dataObj.expenses = expensesData;
+
+      const tripPayload = {
+        tripNumber: trip.tripNumber,
+        tripDate: trip.tripDate,
+        tripType: trip.tripType,
+        vehicleType: trip.vehicleType,
+        origin: trip.origin,
+        destination: trip.destination,
+        status: trip.status,
+        expenses: expensesData,
+        data: JSON.stringify(dataObj),
+        updatedAt: new Date().toISOString(),
+      };
+      await syncService.save('trips', tripPayload, true, trip.id);
+
+      // Create On-Account payable entries as Branch Day Book expenses (server will convert to ledgerEntries)
+      const ownedDriverId = String(dataObj?.ownedDriver || trip.ownedDriver || trip.driverId || '').trim();
+      if (branchId && ownedDriverId) {
+        const tripNo = trip.tripNumber || trip.id;
+        const safeTripId = trip.id;
+
+        const createPayable = async (suffix, expType, amt) => {
+          const a = Number(amt || 0) || 0;
+          if (!(a > 0)) return;
+          const expenseNumber = `TEXP-TRIP-${safeTripId}-${suffix}`;
+          const payload = {
+            expenseNumber,
+            expenseDate: trip.tripDate || new Date().toISOString().slice(0, 10),
+            branch: String(branchId),
+            expenseCategory: 'Operating',
+            expenseType: expType,
+            amount: a,
+            gstAmount: 0,
+            totalAmount: a,
+            paymentMode: 'On Account',
+            paidTo: '',
+            description: `${expType} payable for Trip ${tripNo}`,
+            status: 'Active',
+            tripId: String(trip.id),
+            tripNumber: String(trip.tripNumber || ''),
+            driverId: ownedDriverId,
+            source: 'TripExpensesForm',
+          };
+
+          const r = await syncService.save('branchExpenses', { ...payload, createdAt: new Date().toISOString() });
+          if (r && r.success === false) {
+            const msg = String(r.error || '');
+            if (!msg.toLowerCase().includes('already') && !msg.toLowerCase().includes('exists')) {
+              console.warn('BranchExpense payable create failed:', r);
+            }
+          }
+        };
+
+        await createPayable('SAL-ONACC', 'Trip Salary', onAccountSalary);
+        await createPayable('BHA-ONACC', 'Trip Bhatta', onAccountBhatta);
+        await createPayable('OTH-ONACC', 'Trip Other', onAccountOther);
+      }
+    } catch (error) {
+      console.error('Server sync / ledger posting failed:', error);
     }
     
     alert(`✅ Trip Expenses Saved!\n\nTrip: ${trip.tripNumber}\nTotal Expenses: ₹${totalExpenses.toFixed(2)}\nDriver Balance: ₹${balancePayment.toFixed(2)}\nAverage per KM: ₹${avgPerKM}${(salary > 0 || totalBhatta > 0) ? '\n\nLedger entries created for salary/bhatta.' : ''}`);
